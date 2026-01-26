@@ -1,0 +1,32 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Database
+*.db
+*.db-journal
+
+# Node/Bun
+node_modules/
+.svelte-kit/
+build/
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+/tmp/
+
+# Config (contains private keys!)
+.config/burrow/

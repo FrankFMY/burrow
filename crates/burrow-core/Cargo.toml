@@ -1,0 +1,16 @@
+[package]
+name = "burrow-core"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+description = "Core types and utilities for Burrow VPN"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+base64 = { workspace = true }
+rand = { workspace = true }
+x25519-dalek = { version = "2", features = ["static_secrets"] }

@@ -1,0 +1,199 @@
+//! Authentication and authorization
+
+use axum::{
+    extract::{Request, State},
+    http::{header, StatusCode},
+    middleware::Next,
+    response::{IntoResponse, Response},
+    Json,
+};
+use chrono::{Duration, Utc};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+use crate::state::AppState;
+
+/// JWT Claims
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Claims {
+    pub sub: String,        // user_id
+    pub email: String,
+    pub role: String,       // "admin" or "user"
+    pub exp: i64,           // expiration timestamp
+    pub iat: i64,           // issued at
+}
+
+/// Auth error response
+#[derive(Serialize)]
+pub struct AuthError {
+    pub error: String,
+}
+
+impl IntoResponse for AuthError {
+    fn into_response(self) -> Response {
+        (StatusCode::UNAUTHORIZED, Json(self)).into_response()
+    }
+}
+
+/// Create JWT token for user
+pub fn create_token(user_id: &str, email: &str, role: &str, secret: &str) -> Result<String, jsonwebtoken::errors::Error> {
+    let now = Utc::now();
+    let exp = now + Duration::hours(24);
+
+    let claims = Claims {
+        sub: user_id.to_string(),
+        email: email.to_string(),
+        role: role.to_string(),
+        exp: exp.timestamp(),
+        iat: now.timestamp(),
+    };
+
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+}
+
+/// Verify JWT token
+pub fn verify_token(token: &str, secret: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
+    let token_data = decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &Validation::default(),
+    )?;
+
+    Ok(token_data.claims)
+}
+
+/// Auth middleware - validates JWT or API key
+pub async fn auth_middleware(
+    State(state): State<Arc<AppState>>,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, AuthError> {
+    let auth_header = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok());
+
+    let claims = match auth_header {
+        Some(header) if header.starts_with("Bearer ") => {
+            let token = &header[7..];
+            verify_token(token, &state.jwt_secret).map_err(|_| AuthError {
+                error: "Invalid token".to_string(),
+            })?
+        }
+        Some(header) if header.starts_with("ApiKey ") => {
+            let api_key = &header[7..];
+            validate_api_key(&state, api_key).await.map_err(|_| AuthError {
+                error: "Invalid API key".to_string(),
+            })?
+        }
+        _ => {
+            return Err(AuthError {
+                error: "Missing authorization header".to_string(),
+            });
+        }
+    };
+
+    // Add claims to request extensions
+    request.extensions_mut().insert(claims);
+
+    Ok(next.run(request).await)
+}
+
+/// Optional auth middleware - doesn't require auth but extracts it if present
+pub async fn optional_auth_middleware(
+    State(state): State<Arc<AppState>>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    if let Some(auth_header) = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+    {
+        if let Some(token) = auth_header.strip_prefix("Bearer ") {
+            if let Ok(claims) = verify_token(token, &state.jwt_secret) {
+                request.extensions_mut().insert(claims);
+            }
+        }
+    }
+
+    next.run(request).await
+}
+
+/// Admin-only middleware
+pub async fn admin_middleware(
+    request: Request,
+    next: Next,
+) -> Result<Response, AuthError> {
+    let claims = request
+        .extensions()
+        .get::<Claims>()
+        .ok_or_else(|| AuthError {
+            error: "Not authenticated".to_string(),
+        })?;
+
+    if claims.role != "admin" {
+        return Err(AuthError {
+            error: "Admin access required".to_string(),
+        });
+    }
+
+    Ok(next.run(request).await)
+}
+
+/// Validate API key and return claims
+async fn validate_api_key(state: &AppState, api_key: &str) -> anyhow::Result<Claims> {
+    let row = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT user_id, email, role FROM api_keys WHERE key = ? AND revoked = 0"
+    )
+    .bind(api_key)
+    .fetch_one(&state.db)
+    .await?;
+
+    // Update last_used timestamp
+    sqlx::query("UPDATE api_keys SET last_used = ? WHERE key = ?")
+        .bind(Utc::now().to_rfc3339())
+        .bind(api_key)
+        .execute(&state.db)
+        .await
+        .ok();
+
+    Ok(Claims {
+        sub: row.0,
+        email: row.1,
+        role: row.2,
+        exp: i64::MAX,
+        iat: Utc::now().timestamp(),
+    })
+}
+
+/// Hash password using bcrypt
+pub fn hash_password(password: &str) -> Result<String, bcrypt::BcryptError> {
+    bcrypt::hash(password, bcrypt::DEFAULT_COST)
+}
+
+/// Verify password against hash
+pub fn verify_password(password: &str, hash: &str) -> Result<bool, bcrypt::BcryptError> {
+    bcrypt::verify(password, hash)
+}
+
+/// Generate random API key
+pub fn generate_api_key() -> String {
+    use rand::Rng;
+    const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut rng = rand::thread_rng();
+
+    let key: String = (0..32)
+        .map(|_| {
+            let idx = rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect();
+
+    format!("brw_{}", key)
+}

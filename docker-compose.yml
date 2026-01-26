@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  burrow-server:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - burrow-data:/data
+    environment:
+      - DATABASE_URL=sqlite:/data/burrow.db?mode=rwc
+      - BIND_ADDR=0.0.0.0:3000
+      - RUST_LOG=info
+    restart: unless-stopped
+
+  burrow-web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      - API_URL=http://burrow-server:3000
+    depends_on:
+      - burrow-server
+
+volumes:
+  burrow-data:

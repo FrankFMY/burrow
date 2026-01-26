@@ -1,0 +1,32 @@
+[package]
+name = "burrow-server"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+description = "Burrow coordination server"
+
+[dependencies]
+burrow-core = { path = "../burrow-core" }
+tokio = { workspace = true }
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+rand = { workspace = true }
+futures-util = "0.3"
+bcrypt = "0.16"
+jsonwebtoken = "9"
+totp-rs = { version = "5", features = ["qr", "gen_secret"] }
+base64 = "0.22"
+qrcode = "0.14"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
