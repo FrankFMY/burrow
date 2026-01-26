@@ -1,106 +1,115 @@
 <script lang="ts">
-    import { page } from '$app/stores';
-    import { onMount, onDestroy } from 'svelte';
-    import { networksApi } from '$lib/api';
-    import { websocket, isWsConnected } from '$lib/stores/websocket';
+import { onDestroy, onMount } from 'svelte';
+import { page } from '$app/stores';
+import { getErrorMessage, networksApi } from '$lib/api';
+import { isWsConnected, websocket } from '$lib/stores/websocket';
 
-    interface Network {
-        id: string;
-        name: string;
-        cidr: string;
-        created_at: string;
-    }
+interface Network {
+    id: string;
+    name: string;
+    cidr: string;
+    created_at: string;
+}
 
-    interface Node {
-        id: string;
-        name: string;
-        public_key: string;
-        mesh_ip: string;
-        endpoint?: string;
-        status: string;
-        created_at: string;
-        last_seen?: string;
-    }
+interface Node {
+    id: string;
+    name: string;
+    public_key: string;
+    mesh_ip: string;
+    endpoint?: string;
+    status: string;
+    created_at: string;
+    last_seen?: string;
+}
 
-    let network: Network | null = null;
-    let nodes: Node[] = [];
-    let inviteCode = '';
-    let loading = true;
-    let copied = false;
-    let error = '';
+let network: Network | null = null;
+let nodes: Node[] = [];
+let inviteCode = '';
+let loading = true;
+let copied = false;
+let error = '';
 
-    $: networkId = $page.params.id;
+$: networkId = $page.params.id;
 
-    // Handle WebSocket events
-    $: if ($websocket.lastEvent) {
-        const event = $websocket.lastEvent;
-        if (event.data?.network_id === networkId) {
-            switch (event.type) {
-                case 'NodeJoined':
-                    if (event.data) {
-                        nodes = [...nodes, {
-                            id: event.data.node_id!,
-                            name: event.data.name!,
+// Handle WebSocket events
+$: if ($websocket.lastEvent) {
+    const event = $websocket.lastEvent;
+    const eventData = event.data ?? {};
+    if (eventData.network_id === networkId) {
+        const { node_id, name: nodeName, mesh_ip, status } = eventData;
+        switch (event.type) {
+            case 'NodeJoined':
+                if (node_id && nodeName && mesh_ip) {
+                    nodes = [
+                        ...nodes,
+                        {
+                            id: node_id,
+                            name: nodeName,
                             public_key: '',
-                            mesh_ip: event.data.mesh_ip!,
+                            mesh_ip: mesh_ip,
                             status: 'online',
                             created_at: new Date().toISOString(),
-                        }];
-                    }
-                    break;
-                case 'NodeStatus':
-                    if (event.data) {
-                        nodes = nodes.map(n =>
-                            n.id === event.data!.node_id
-                                ? { ...n, status: event.data!.status! }
-                                : n
-                        );
-                    }
-                    break;
-                case 'NodeLeft':
-                    if (event.data) {
-                        nodes = nodes.filter(n => n.id !== event.data!.node_id);
-                    }
-                    break;
-            }
+                        },
+                    ];
+                }
+                break;
+            case 'NodeStatus':
+                if (node_id && status) {
+                    nodes = nodes.map((n) => (n.id === node_id ? { ...n, status } : n));
+                }
+                break;
+            case 'NodeLeft':
+                if (node_id) {
+                    nodes = nodes.filter((n) => n.id !== node_id);
+                }
+                break;
         }
     }
+}
 
-    onMount(async () => {
-        try {
-            const [netData, nodesData] = await Promise.all([
-                networksApi.get(networkId),
-                networksApi.listNodes(networkId)
-            ]);
-            network = netData;
-            nodes = nodesData;
-
-            // Connect to WebSocket for this network
-            websocket.connect(networkId);
-        } catch (e: any) {
-            error = e.message;
-        }
+onMount(async () => {
+    if (!networkId) {
+        error = 'Network ID not found';
         loading = false;
-    });
-
-    onDestroy(() => {
-        websocket.disconnect();
-    });
-
-    async function generateInvite() {
-        try {
-            const data = await networksApi.createInvite(networkId);
-            inviteCode = data.code;
-        } catch (e: any) {
-            error = e.message;
-        }
+        return;
     }
+    try {
+        const [netData, nodesData] = await Promise.all([
+            networksApi.get(networkId),
+            networksApi.listNodes(networkId),
+        ]);
+        network = netData;
+        nodes = nodesData;
 
-    async function copyCode() {
-        await navigator.clipboard.writeText(`burrow join ${inviteCode}`);
-        copied = true;
-        setTimeout(() => copied = false, 2000);
+        // Connect to WebSocket for this network
+        websocket.connect(networkId);
+    } catch (e: unknown) {
+        error = getErrorMessage(e);
     }
+    loading = false;
+});
+
+onDestroy(() => {
+    websocket.disconnect();
+});
+
+async function generateInvite() {
+    if (!networkId) return;
+    try {
+        const data = await networksApi.createInvite(networkId);
+        inviteCode = data.code;
+    } catch (e: unknown) {
+        error = getErrorMessage(e);
+    }
+}
+
+async function copyCode() {
+    await navigator.clipboard.writeText(`burrow join ${inviteCode}`);
+    copied = true;
+    setTimeout(() => {
+        copied = false;
+    }, 2000);
+}
 </script>
 
 <svelte:head><title>{network?.name || 'Network'} - Burrow</title></svelte:head>

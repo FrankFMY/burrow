@@ -7,6 +7,7 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Query, State,
     },
+    http::StatusCode,
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -124,10 +125,10 @@ pub async fn ws_handler(
 
     // Require authentication for all WebSocket connections
     if !authenticated {
-        return axum::response::Response::builder()
-            .status(axum::http::StatusCode::UNAUTHORIZED)
-            .body(axum::body::Body::from("Authentication required for WebSocket connection"))
-            .unwrap()
+        return (
+            StatusCode::UNAUTHORIZED,
+            "Authentication required for WebSocket connection",
+        )
             .into_response();
     }
 

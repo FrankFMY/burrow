@@ -1,4 +1,4 @@
-import { writable, derived } from 'svelte/store';
+import { derived, writable } from 'svelte/store';
 import { browser } from '$app/environment';
 
 interface User {
@@ -43,15 +43,15 @@ function createAuthStore() {
         },
 
         setLoading: (loading: boolean) => {
-            update(state => ({ ...state, loading }));
+            update((state) => ({ ...state, loading }));
         },
 
         setUser: (user: User) => {
-            update(state => ({ ...state, user, loading: false }));
+            update((state) => ({ ...state, user, loading: false }));
         },
     };
 }
 
 export const auth = createAuthStore();
-export const isAuthenticated = derived(auth, $auth => !!$auth.token);
-export const isAdmin = derived(auth, $auth => $auth.user?.role === 'admin');
+export const isAuthenticated = derived(auth, ($auth) => !!$auth.token);
+export const isAdmin = derived(auth, ($auth) => $auth.user?.role === 'admin');

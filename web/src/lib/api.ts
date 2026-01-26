@@ -1,16 +1,19 @@
+import { get } from 'svelte/store';
 import { browser } from '$app/environment';
 import { auth } from './stores/auth';
-import { get } from 'svelte/store';
 
 // Use environment variable in production, empty string for dev proxy
-const API_BASE = browser ? (import.meta.env.VITE_API_URL || '') : '';
+const API_BASE = browser ? import.meta.env.VITE_API_URL || '' : '';
 
 interface RequestOptions extends RequestInit {
     skipAuth?: boolean;
 }
 
 class ApiError extends Error {
-    constructor(public status: number, message: string) {
+    constructor(
+        public status: number,
+        message: string
+    ) {
         super(message);
         this.name = 'ApiError';
     }
@@ -18,15 +21,16 @@ class ApiError extends Error {
 
 async function request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
     const { skipAuth, ...fetchOptions } = options;
+    const customHeaders = fetchOptions.headers as Record<string, string> | undefined;
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
-        ...(fetchOptions.headers as Record<string, string> || {}),
+        ...customHeaders,
     };
 
     if (!skipAuth) {
         const { token } = get(auth);
         if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
+            headers.Authorization = `Bearer ${token}`;
         }
     }
 
@@ -37,6 +41,14 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
 
     if (!response.ok) {
         const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+
+        // Auto-logout on 401 (expired/invalid token) for authenticated requests
+        if (response.status === 401 && !skipAuth && browser) {
+            auth.logout();
+            // Redirect to login page
+            globalThis.location.href = '/login';
+        }
+
         throw new ApiError(response.status, error.error || error.message || 'Request failed');
     }
 
@@ -61,8 +73,7 @@ export const authApi = {
             { method: 'POST', body: JSON.stringify(data), skipAuth: true }
         ),
 
-    me: () =>
-        request<{ id: string; email: string; name: string; role: string }>('/api/auth/me'),
+    me: () => request<{ id: string; email: string; name: string; role: string }>('/api/auth/me'),
 
     listApiKeys: () =>
         request<{ id: string; name: string; created_at: string; last_used?: string }[]>(
@@ -75,12 +86,10 @@ export const authApi = {
             { method: 'POST', body: JSON.stringify({ name }) }
         ),
 
-    revokeApiKey: (id: string) =>
-        request<void>(`/api/auth/api-keys/${id}`, { method: 'DELETE' }),
+    revokeApiKey: (id: string) => request<void>(`/api/auth/api-keys/${id}`, { method: 'DELETE' }),
 
     // 2FA
-    totpStatus: () =>
-        request<{ enabled: boolean; verified: boolean }>('/api/auth/totp'),
+    totpStatus: () => request<{ enabled: boolean; verified: boolean }>('/api/auth/totp'),
 
     enableTotp: () =>
         request<{
@@ -109,34 +118,50 @@ export const networksApi = {
         request<{ id: string; name: string; cidr: string; created_at: string }[]>('/api/networks'),
 
     get: (id: string) =>
-        request<{ id: string; name: string; cidr: string; created_at: string }>(`/api/networks/${id}`),
+        request<{ id: string; name: string; cidr: string; created_at: string }>(
+            `/api/networks/${id}`
+        ),
 
     create: (data: { name: string; cidr?: string }) =>
-        request<{ id: string; name: string; cidr: string; created_at: string }>(
-            '/api/networks',
-            { method: 'POST', body: JSON.stringify(data) }
-        ),
+        request<{ id: string; name: string; cidr: string; created_at: string }>('/api/networks', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        }),
 
-    delete: (id: string) =>
-        request<void>(`/api/networks/${id}`, { method: 'DELETE' }),
+    delete: (id: string) => request<void>(`/api/networks/${id}`, { method: 'DELETE' }),
 
     listNodes: (networkId: string) =>
-        request<{
-            id: string;
-            name: string;
-            public_key: string;
-            mesh_ip: string;
-            endpoint?: string;
-            status: string;
-            created_at: string;
-            last_seen?: string;
-        }[]>(`/api/networks/${networkId}/nodes`),
+        request<
+            {
+                id: string;
+                name: string;
+                public_key: string;
+                mesh_ip: string;
+                endpoint?: string;
+                status: string;
+                created_at: string;
+                last_seen?: string;
+            }[]
+        >(`/api/networks/${networkId}/nodes`),
 
     createInvite: (networkId: string) =>
-        request<{ code: string; expires_at: string }>(
-            `/api/networks/${networkId}/invite`,
-            { method: 'POST' }
-        ),
+        request<{ code: string; expires_at: string }>(`/api/networks/${networkId}/invite`, {
+            method: 'POST',
+        }),
 };
 
 export { ApiError };
+
+// Helper to extract error message from unknown catch value
+export function getErrorMessage(error: unknown): string {
+    if (error instanceof ApiError) {
+        return error.message;
+    }
+    if (error instanceof Error) {
+        return error.message;
+    }
+    if (typeof error === 'string') {
+        return error;
+    }
+    return 'Unknown error';
+}

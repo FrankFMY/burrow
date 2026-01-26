@@ -1,134 +1,134 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
-    import { authApi } from '$lib/api';
-    import { goto } from '$app/navigation';
-    import { isAuthenticated, auth } from '$lib/stores/auth';
+import { onMount } from 'svelte';
+import { goto } from '$app/navigation';
+import { authApi, getErrorMessage } from '$lib/api';
+import { auth, isAuthenticated } from '$lib/stores/auth';
 
-    let totpEnabled = false;
-    let totpVerified = false;
-    let loading = true;
-    let error = '';
+let totpEnabled = false;
+let totpVerified = false;
+let loading = true;
+let error = '';
 
-    // Setup state
-    let setupMode = false;
-    let qrCode = '';
-    let secret = '';
-    let backupCodes: string[] = [];
-    let verifyCode = '';
-    let verifying = false;
+// Setup state
+let setupMode = false;
+let qrCode = '';
+let secret = '';
+let backupCodes: string[] = [];
+let verifyCode = '';
+let verifying = false;
 
-    // Disable state
-    let disableMode = false;
-    let disableCode = '';
-    let disabling = false;
+// Disable state
+let disableMode = false;
+let disableCode = '';
+let disabling = false;
 
-    // API Keys
-    let apiKeys: { id: string; name: string; created_at: string; last_used?: string }[] = [];
-    let newKeyName = '';
-    let creatingKey = false;
-    let newKey: { key: string; name: string } | null = null;
+// API Keys
+let apiKeys: { id: string; name: string; created_at: string; last_used?: string }[] = [];
+let newKeyName = '';
+let creatingKey = false;
+let newKey: { key: string; name: string } | null = null;
 
-    onMount(async () => {
-        if (!$isAuthenticated) {
-            goto('/login');
-            return;
-        }
-
-        try {
-            const [status, keys] = await Promise.all([
-                authApi.totpStatus(),
-                authApi.listApiKeys(),
-            ]);
-            totpEnabled = status.enabled;
-            totpVerified = status.verified;
-            apiKeys = keys;
-        } catch (e: any) {
-            error = e.message;
-        } finally {
-            loading = false;
-        }
-    });
-
-    async function startTotpSetup() {
-        error = '';
-        try {
-            const result = await authApi.enableTotp();
-            qrCode = result.qr_code;
-            secret = result.secret;
-            backupCodes = result.backup_codes;
-            setupMode = true;
-        } catch (e: any) {
-            error = e.message;
-        }
+onMount(async () => {
+    if (!$isAuthenticated) {
+        goto('/login');
+        return;
     }
 
-    async function verifySetup() {
-        error = '';
-        verifying = true;
-        try {
-            await authApi.verifyTotp(verifyCode);
-            totpEnabled = true;
-            totpVerified = true;
-            setupMode = false;
-            qrCode = '';
-            secret = '';
-            verifyCode = '';
-        } catch (e: any) {
-            error = e.message;
-        } finally {
-            verifying = false;
-        }
+    try {
+        const [status, keys] = await Promise.all([authApi.totpStatus(), authApi.listApiKeys()]);
+        totpEnabled = status.enabled;
+        totpVerified = status.verified;
+        apiKeys = keys;
+    } catch (e: unknown) {
+        error = getErrorMessage(e);
+    } finally {
+        loading = false;
     }
+});
 
-    async function disableTotp() {
-        error = '';
-        disabling = true;
-        try {
-            await authApi.disableTotp(disableCode);
-            totpEnabled = false;
-            totpVerified = false;
-            disableMode = false;
-            disableCode = '';
-            backupCodes = [];
-        } catch (e: any) {
-            error = e.message;
-        } finally {
-            disabling = false;
-        }
+async function startTotpSetup() {
+    error = '';
+    try {
+        const result = await authApi.enableTotp();
+        qrCode = result.qr_code;
+        secret = result.secret;
+        backupCodes = result.backup_codes;
+        setupMode = true;
+    } catch (e: unknown) {
+        error = getErrorMessage(e);
     }
+}
 
-    async function createApiKey() {
-        if (!newKeyName.trim()) return;
-        error = '';
-        creatingKey = true;
-        try {
-            const result = await authApi.createApiKey(newKeyName);
-            newKey = { key: result.key, name: result.name };
-            apiKeys = [...apiKeys, {
+async function verifySetup() {
+    error = '';
+    verifying = true;
+    try {
+        await authApi.verifyTotp(verifyCode);
+        totpEnabled = true;
+        totpVerified = true;
+        setupMode = false;
+        qrCode = '';
+        secret = '';
+        verifyCode = '';
+    } catch (e: unknown) {
+        error = getErrorMessage(e);
+    } finally {
+        verifying = false;
+    }
+}
+
+async function disableTotp() {
+    error = '';
+    disabling = true;
+    try {
+        await authApi.disableTotp(disableCode);
+        totpEnabled = false;
+        totpVerified = false;
+        disableMode = false;
+        disableCode = '';
+        backupCodes = [];
+    } catch (e: unknown) {
+        error = getErrorMessage(e);
+    } finally {
+        disabling = false;
+    }
+}
+
+async function createApiKey() {
+    if (!newKeyName.trim()) return;
+    error = '';
+    creatingKey = true;
+    try {
+        const result = await authApi.createApiKey(newKeyName);
+        newKey = { key: result.key, name: result.name };
+        apiKeys = [
+            ...apiKeys,
+            {
                 id: result.id,
                 name: result.name,
                 created_at: result.created_at,
-            }];
-            newKeyName = '';
-        } catch (e: any) {
-            error = e.message;
-        } finally {
-            creatingKey = false;
-        }
+            },
+        ];
+        newKeyName = '';
+    } catch (e: unknown) {
+        error = getErrorMessage(e);
+    } finally {
+        creatingKey = false;
     }
+}
 
-    async function revokeKey(id: string) {
-        try {
-            await authApi.revokeApiKey(id);
-            apiKeys = apiKeys.filter(k => k.id !== id);
-        } catch (e: any) {
-            error = e.message;
-        }
+async function revokeKey(id: string) {
+    try {
+        await authApi.revokeApiKey(id);
+        apiKeys = apiKeys.filter((k) => k.id !== id);
+    } catch (e: unknown) {
+        error = getErrorMessage(e);
     }
+}
 
-    function copyToClipboard(text: string) {
-        navigator.clipboard.writeText(text);
-    }
+function copyToClipboard(text: string) {
+    navigator.clipboard.writeText(text);
+}
 </script>
 
 <svelte:head>

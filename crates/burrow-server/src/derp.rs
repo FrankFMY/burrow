@@ -7,6 +7,7 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Query, State,
     },
+    http::StatusCode,
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -117,10 +118,10 @@ pub async fn derp_handler(
     let secret = match query.secret {
         Some(s) if s.starts_with("ns_") && s.len() == 35 => s,
         _ => {
-            return axum::response::Response::builder()
-                .status(axum::http::StatusCode::UNAUTHORIZED)
-                .body(axum::body::Body::from("Authentication required: provide valid node secret"))
-                .unwrap()
+            return (
+                StatusCode::UNAUTHORIZED,
+                "Authentication required: provide valid node secret",
+            )
                 .into_response();
         }
     };
@@ -128,11 +129,7 @@ pub async fn derp_handler(
     // Verify node_secret against database
     if !state.verify_node_secret(&secret).await {
         tracing::warn!("DERP connection rejected: invalid node secret");
-        return axum::response::Response::builder()
-            .status(axum::http::StatusCode::UNAUTHORIZED)
-            .body(axum::body::Body::from("Invalid node secret"))
-            .unwrap()
-            .into_response();
+        return (StatusCode::UNAUTHORIZED, "Invalid node secret").into_response();
     }
 
     tracing::debug!("DERP connection authenticated with secret: {}...", &secret[..8]);

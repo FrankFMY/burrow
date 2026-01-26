@@ -1,35 +1,40 @@
 {
-  "name": "burrow-web",
-  "version": "0.1.0",
-  "description": "Burrow VPN Web Dashboard",
-  "author": {
-    "name": "Прянишников Артём Алексеевич",
-    "email": "Pryanishnikovartem@gmail.com",
-    "url": "https://github.com/FrankFMY"
-  },
-  "license": "Apache-2.0",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/FrankFMY/burrow.git",
-    "directory": "web"
-  },
-  "type": "module",
-  "private": true,
-  "scripts": {
-    "dev": "vite dev",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
-  },
-  "dependencies": {
-    "@sveltejs/adapter-static": "^3.0.10",
-    "@sveltejs/kit": "^2.50.1",
-    "svelte": "^5.48.2",
-    "vite": "^7.3.1"
-  }
+    "name": "burrow-web",
+    "version": "0.1.0",
+    "description": "Burrow VPN Web Dashboard",
+    "author": {
+        "name": "Прянишников Артём Алексеевич",
+        "email": "Pryanishnikovartem@gmail.com",
+        "url": "https://github.com/FrankFMY"
+    },
+    "license": "Apache-2.0",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/FrankFMY/burrow.git",
+        "directory": "web"
+    },
+    "type": "module",
+    "private": true,
+    "scripts": {
+        "dev": "vite dev",
+        "build": "vite build",
+        "preview": "vite preview",
+        "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+        "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+        "lint": "biome check .",
+        "lint:fix": "biome check --write .",
+        "format": "biome format --write ."
+    },
+    "devDependencies": {
+        "@types/bun": "latest"
+    },
+    "peerDependencies": {
+        "typescript": "^5"
+    },
+    "dependencies": {
+        "@sveltejs/adapter-static": "^3.0.10",
+        "@sveltejs/kit": "^2.50.1",
+        "svelte": "^5.48.2",
+        "vite": "^7.3.1"
+    }
 }

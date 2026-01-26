@@ -1,29 +1,29 @@
 <script lang="ts">
-    import '../app.css';
-    import { onMount } from 'svelte';
-    import { auth, isAuthenticated } from '$lib/stores/auth';
-    import { authApi } from '$lib/api';
-    import { goto } from '$app/navigation';
+import '../app.css';
+import { onMount } from 'svelte';
+import { goto } from '$app/navigation';
+import { authApi } from '$lib/api';
+import { auth, isAuthenticated } from '$lib/stores/auth';
 
-    onMount(async () => {
-        // If we have a token but no user, fetch user info
-        if ($auth.token && !$auth.user) {
-            try {
-                const user = await authApi.me();
-                auth.setUser(user);
-            } catch {
-                // Token invalid, clear it
-                auth.logout();
-            }
-        } else {
-            auth.setLoading(false);
+onMount(async () => {
+    // If we have a token but no user, fetch user info
+    if ($auth.token && !$auth.user) {
+        try {
+            const user = await authApi.me();
+            auth.setUser(user);
+        } catch {
+            // Token invalid, clear it
+            auth.logout();
         }
-    });
-
-    function handleLogout() {
-        auth.logout();
-        goto('/login');
+    } else {
+        auth.setLoading(false);
     }
+});
+
+function handleLogout() {
+    auth.logout();
+    goto('/login');
+}
 </script>
 
 <div class="app">

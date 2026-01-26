@@ -145,13 +145,15 @@ fn authed_client(config: &AgentConfig) -> reqwest::Client {
     if let Some(ref api_key) = config.api_key {
         headers.insert(
             reqwest::header::AUTHORIZATION,
-            format!("ApiKey {}", api_key).parse().unwrap(),
+            format!("ApiKey {}", api_key)
+                .parse()
+                .expect("API key header should be valid ASCII"),
         );
     }
     reqwest::Client::builder()
         .default_headers(headers)
         .build()
-        .unwrap()
+        .expect("Failed to build HTTP client")
 }
 
 #[tokio::main]

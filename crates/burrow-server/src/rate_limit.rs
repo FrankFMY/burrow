@@ -9,7 +9,7 @@ use axum::{
 };
 use std::{
     collections::HashMap,
-    net::IpAddr,
+    net::{IpAddr, Ipv4Addr},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -163,5 +163,5 @@ fn extract_client_ip(request: &Request) -> IpAddr {
     }
 
     // Fallback to localhost (safe default - will rate limit all unknown sources together)
-    "127.0.0.1".parse().unwrap()
+    IpAddr::V4(Ipv4Addr::LOCALHOST)
 }

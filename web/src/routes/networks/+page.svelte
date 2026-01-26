@@ -1,39 +1,39 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
-    import { networksApi } from '$lib/api';
+import { onMount } from 'svelte';
+import { getErrorMessage, networksApi } from '$lib/api';
 
-    let networks: { id: string; name: string; cidr: string; created_at: string }[] = [];
-    let loading = true;
-    let showCreate = false;
-    let newName = '';
-    let error = '';
+let networks: { id: string; name: string; cidr: string; created_at: string }[] = [];
+let loading = true;
+let showCreate = false;
+let newName = '';
+let error = '';
 
-    onMount(async () => {
+onMount(async () => {
+    await loadNetworks();
+});
+
+async function loadNetworks() {
+    loading = true;
+    try {
+        networks = await networksApi.list();
+    } catch (e: unknown) {
+        error = getErrorMessage(e);
+    }
+    loading = false;
+}
+
+async function createNetwork() {
+    if (!newName.trim()) return;
+    error = '';
+    try {
+        await networksApi.create({ name: newName });
+        newName = '';
+        showCreate = false;
         await loadNetworks();
-    });
-
-    async function loadNetworks() {
-        loading = true;
-        try {
-            networks = await networksApi.list();
-        } catch (e: any) {
-            error = e.message;
-        }
-        loading = false;
+    } catch (e: unknown) {
+        error = getErrorMessage(e);
     }
-
-    async function createNetwork() {
-        if (!newName.trim()) return;
-        error = '';
-        try {
-            await networksApi.create({ name: newName });
-            newName = '';
-            showCreate = false;
-            await loadNetworks();
-        } catch (e: any) {
-            error = e.message;
-        }
-    }
+}
 </script>
 
 <svelte:head><title>Networks - Burrow</title></svelte:head>
@@ -48,7 +48,7 @@
         <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
         <div class="modal-bg" role="presentation" on:click={() => showCreate = false} on:keydown={(e) => e.key === 'Escape' && (showCreate = false)}>
             <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-            <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" on:click|stopPropagation on:keydown|stopPropagation>
+            <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>
                 <h2 id="modal-title">Create Network</h2>
                 <form on:submit|preventDefault={createNetwork}>
                     <!-- svelte-ignore a11y_autofocus -->

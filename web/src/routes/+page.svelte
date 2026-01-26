@@ -1,28 +1,43 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
-    import { isAuthenticated } from '$lib/stores/auth';
-    import { networksApi } from '$lib/api';
+import { onMount } from 'svelte';
+import { networksApi } from '$lib/api';
+import { auth, isAuthenticated } from '$lib/stores/auth';
 
-    let networks: { id: string; name: string; cidr: string; created_at: string }[] = [];
-    let stats = { networks: 0, nodes: 0 };
-    let loading = true;
+let networks: { id: string; name: string; cidr: string; created_at: string }[] = [];
+let stats = { networks: 0, nodes: 0 };
+let loading = true;
 
-    onMount(async () => {
-        if ($isAuthenticated) {
-            try {
-                networks = await networksApi.list();
-                stats.networks = networks.length;
-            } catch (e) {
-                console.error('Failed to load networks:', e);
-            }
+onMount(async () => {
+    if ($isAuthenticated) {
+        try {
+            networks = await networksApi.list();
+            stats.networks = networks.length;
+
+            // Fetch nodes count for all networks
+            const nodeCounts = await Promise.all(
+                networks.map((net) =>
+                    networksApi
+                        .listNodes(net.id)
+                        .then((nodes) => nodes.length)
+                        .catch(() => 0)
+                )
+            );
+            stats.nodes = nodeCounts.reduce((a, b) => a + b, 0);
+        } catch (e) {
+            console.error('Failed to load networks:', e);
         }
-        loading = false;
-    });
+    }
+    loading = false;
+});
 </script>
 
 <svelte:head><title>Burrow - Dashboard</title></svelte:head>
 
-{#if !$isAuthenticated}
+{#if $auth.loading}
+    <div class="loading-container">
+        <div class="spinner"></div>
+    </div>
+{:else if !$isAuthenticated}
     <div class="welcome">
         <div class="hero">
             <h1>🕳️ Burrow</h1>
@@ -147,4 +162,23 @@
     .network-card code { color: #a0a0a0; }
     .empty { color: #a0a0a0; }
     .empty a { color: #7c3aed; }
+
+    /* Loading */
+    .loading-container {
+        min-height: 70vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid #2d2d44;
+        border-top-color: #7c3aed;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
 </style>

@@ -1,9 +1,17 @@
-import { writable, derived, get } from 'svelte/store';
+import { derived, get, writable } from 'svelte/store';
 import { browser } from '$app/environment';
 import { auth } from './auth';
 
 export interface WsEvent {
-    type: 'NodeStatus' | 'NodeJoined' | 'NodeLeft' | 'NetworkCreated' | 'NetworkDeleted' | 'Ping' | 'Pong' | 'Error';
+    type:
+        | 'NodeStatus'
+        | 'NodeJoined'
+        | 'NodeLeft'
+        | 'NetworkCreated'
+        | 'NetworkDeleted'
+        | 'Ping'
+        | 'Pong'
+        | 'Error';
     data?: {
         network_id?: string;
         node_id?: string;
@@ -43,10 +51,10 @@ function createWebSocketStore() {
             return;
         }
 
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const protocol = globalThis.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const host = import.meta.env.VITE_API_URL
             ? new URL(import.meta.env.VITE_API_URL).host
-            : window.location.host;
+            : globalThis.location.host;
 
         // Build URL with token and optional network_id
         const params = new URLSearchParams();
@@ -60,7 +68,7 @@ function createWebSocketStore() {
 
         ws.onopen = () => {
             console.log('WebSocket connected');
-            update(s => ({ ...s, connected: true }));
+            update((s) => ({ ...s, connected: true }));
 
             // Start ping interval
             pingInterval = setInterval(() => {
@@ -73,7 +81,7 @@ function createWebSocketStore() {
         ws.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data) as WsEvent;
-                update(s => ({
+                update((s) => ({
                     ...s,
                     events: [...s.events.slice(-99), data], // Keep last 100 events
                     lastEvent: data,
@@ -85,7 +93,7 @@ function createWebSocketStore() {
 
         ws.onclose = () => {
             console.log('WebSocket disconnected');
-            update(s => ({ ...s, connected: false }));
+            update((s) => ({ ...s, connected: false }));
             cleanup();
 
             // Reconnect after 5 seconds
@@ -135,8 +143,8 @@ export const websocket = createWebSocketStore();
 
 // Derived stores for specific event types
 export const nodeEvents = derived(websocket, ($ws) =>
-    $ws.events.filter(e =>
-        e.type === 'NodeStatus' || e.type === 'NodeJoined' || e.type === 'NodeLeft'
+    $ws.events.filter(
+        (e) => e.type === 'NodeStatus' || e.type === 'NodeJoined' || e.type === 'NodeLeft'
     )
 );
 
