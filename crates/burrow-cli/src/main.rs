@@ -115,7 +115,28 @@ fn save_config(config: &AgentConfig) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&path, serde_json::to_string_pretty(config)?)?;
+
+    let data = serde_json::to_string_pretty(config)?;
+
+    // Write config with restricted permissions (contains API key and private key)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600) // Owner read/write only
+            .open(&path)?;
+        file.write_all(data.as_bytes())?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&path, data)?;
+    }
+
     Ok(())
 }
 
