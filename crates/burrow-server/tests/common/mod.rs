@@ -29,8 +29,8 @@ pub async fn create_test_app() -> Router {
 
     // Create app state
     let jwt_secret = "test-secret-key-for-testing-only".to_string();
-    let app_state = Arc::new(AppState::new(pool, jwt_secret));
-    let derp_state = Arc::new(derp::DerpState::new());
+    let app_state = Arc::new(AppState::new(pool.clone(), jwt_secret));
+    let derp_state = Arc::new(derp::DerpState::new(pool));
 
     // Public routes
     let public_routes = Router::new()

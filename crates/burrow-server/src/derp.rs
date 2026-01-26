@@ -1,15 +1,17 @@
 //! DERP (Designated Encrypted Relay for Packets) server
-//! 
+//!
 //! Provides relay service when direct P2P connections fail.
 
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        State,
+        Query, State,
     },
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
+use serde::Deserialize;
+use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
@@ -23,13 +25,28 @@ struct DerpClient {
 /// DERP relay state
 pub struct DerpState {
     clients: RwLock<HashMap<String, DerpClient>>,
+    db: SqlitePool,
 }
 
 impl DerpState {
-    pub fn new() -> Self {
+    pub fn new(db: SqlitePool) -> Self {
         Self {
             clients: RwLock::new(HashMap::new()),
+            db,
         }
+    }
+
+    /// Verify node_secret against database
+    pub async fn verify_node_secret(&self, secret: &str) -> bool {
+        let result: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM nodes WHERE node_secret = ?"
+        )
+        .bind(secret)
+        .fetch_optional(&self.db)
+        .await
+        .unwrap_or(None);
+
+        result.is_some()
     }
     
     async fn register(&self, public_key: String, tx: mpsc::Sender<Vec<u8>>) {
@@ -64,12 +81,46 @@ const PKT_SEND: u8 = 0x02;
 const PKT_RECV: u8 = 0x03;
 const PKT_KEEPALIVE: u8 = 0x04;
 
+/// Query params for DERP authentication
+#[derive(Debug, Deserialize)]
+pub struct DerpQuery {
+    /// Node secret for authentication
+    pub secret: Option<String>,
+}
+
 /// Handle WebSocket upgrade for DERP connection
+/// Requires authentication via node_secret query parameter verified against database
 pub async fn derp_handler(
     ws: WebSocketUpgrade,
+    Query(query): Query<DerpQuery>,
     State(state): State<Arc<DerpState>>,
 ) -> impl IntoResponse {
+    // Require node secret for DERP connection
+    let secret = match query.secret {
+        Some(s) if s.starts_with("ns_") && s.len() == 35 => s,
+        _ => {
+            return axum::response::Response::builder()
+                .status(axum::http::StatusCode::UNAUTHORIZED)
+                .body(axum::body::Body::from("Authentication required: provide valid node secret"))
+                .unwrap()
+                .into_response();
+        }
+    };
+
+    // Verify node_secret against database
+    if !state.verify_node_secret(&secret).await {
+        tracing::warn!("DERP connection rejected: invalid node secret");
+        return axum::response::Response::builder()
+            .status(axum::http::StatusCode::UNAUTHORIZED)
+            .body(axum::body::Body::from("Invalid node secret"))
+            .unwrap()
+            .into_response();
+    }
+
+    tracing::debug!("DERP connection authenticated with secret: {}...", &secret[..8]);
+
     ws.on_upgrade(move |socket| handle_connection(socket, state))
+        .into_response()
 }
 
 async fn handle_connection(socket: WebSocket, state: Arc<DerpState>) {
@@ -110,20 +161,24 @@ async fn handle_connection(socket: WebSocket, state: Arc<DerpState>) {
             }
             PKT_SEND => {
                 // Format: [type][key_len][key][payload]
-                if data.len() > 2 {
+                // Minimum: 1 (type) + 1 (key_len) + 1 (min key) = 3 bytes
+                if data.len() >= 3 {
                     let key_len = data[1] as usize;
-                    if data.len() > 2 + key_len {
+                    // Validate key_len is reasonable and data has enough bytes
+                    if key_len > 0 && key_len <= 255 && data.len() >= 2 + key_len {
                         let dest_key = String::from_utf8_lossy(&data[2..2+key_len]).to_string();
                         let payload = data[2+key_len..].to_vec();
-                        
+
                         // Build receive packet
                         let mut recv_pkt = vec![PKT_RECV];
                         if let Some(ref from) = client_key {
-                            recv_pkt.push(from.len() as u8);
-                            recv_pkt.extend(from.as_bytes());
+                            // Ensure from key length fits in u8
+                            let from_len = from.len().min(255);
+                            recv_pkt.push(from_len as u8);
+                            recv_pkt.extend(from.as_bytes().iter().take(from_len));
                         }
                         recv_pkt.extend(payload);
-                        
+
                         let _ = state.relay(&dest_key, recv_pkt).await;
                     }
                 }

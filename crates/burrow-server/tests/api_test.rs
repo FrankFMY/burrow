@@ -261,7 +261,7 @@ async fn test_node_registration() {
                     json!({
                         "invite_code": invite_code,
                         "name": "Test Node",
-                        "public_key": "test-public-key-123"
+                        "public_key": "YBKaGeYm2c8cJTEhSqWHXaEQEEGh5kF8JZvYL3MWOVU=" // Valid base64, 44 chars
                     })
                     .to_string(),
                 ))

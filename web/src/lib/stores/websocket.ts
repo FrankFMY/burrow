@@ -1,5 +1,6 @@
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 import { browser } from '$app/environment';
+import { auth } from './auth';
 
 export interface WsEvent {
     type: 'NodeStatus' | 'NodeJoined' | 'NodeLeft' | 'NetworkCreated' | 'NetworkDeleted' | 'Ping' | 'Pong' | 'Error';
@@ -35,15 +36,25 @@ function createWebSocketStore() {
         if (!browser) return;
         if (ws?.readyState === WebSocket.OPEN) return;
 
+        // Get authentication token
+        const { token } = get(auth);
+        if (!token) {
+            console.warn('WebSocket connection requires authentication');
+            return;
+        }
+
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const host = import.meta.env.VITE_API_URL
             ? new URL(import.meta.env.VITE_API_URL).host
             : window.location.host;
 
-        let url = `${protocol}//${host}/ws`;
+        // Build URL with token and optional network_id
+        const params = new URLSearchParams();
+        params.set('token', token);
         if (networkId) {
-            url += `?network_id=${networkId}`;
+            params.set('network_id', networkId);
         }
+        const url = `${protocol}//${host}/ws?${params.toString()}`;
 
         ws = new WebSocket(url);
 

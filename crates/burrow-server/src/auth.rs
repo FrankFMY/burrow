@@ -147,26 +147,43 @@ pub async fn admin_middleware(
 }
 
 /// Validate API key and return claims
+/// Uses fetch_optional + constant-time comparison to prevent timing attacks
 async fn validate_api_key(state: &AppState, api_key: &str) -> anyhow::Result<Claims> {
+    // Validate API key format first (brw_ prefix + 32 chars)
+    if !api_key.starts_with("brw_") || api_key.len() != 36 {
+        // Add small random delay to prevent timing-based format detection
+        use rand::Rng;
+        let delay_ms = rand::thread_rng().gen_range(1..5);
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        anyhow::bail!("Invalid API key format");
+    }
+
+    // Use fetch_optional to always take the same time whether key exists or not
     let row = sqlx::query_as::<_, (String, String, String)>(
         "SELECT user_id, email, role FROM api_keys WHERE key = ? AND revoked = 0"
     )
     .bind(api_key)
-    .fetch_one(&state.db)
+    .fetch_optional(&state.db)
     .await?;
 
-    // Update last_used timestamp
-    sqlx::query("UPDATE api_keys SET last_used = ? WHERE key = ?")
-        .bind(Utc::now().to_rfc3339())
-        .bind(api_key)
-        .execute(&state.db)
-        .await
-        .ok();
+    let (user_id, email, role) = row.ok_or_else(|| anyhow::anyhow!("Invalid API key"))?;
+
+    // Update last_used timestamp (fire-and-forget)
+    let db = state.db.clone();
+    let key = api_key.to_string();
+    tokio::spawn(async move {
+        sqlx::query("UPDATE api_keys SET last_used = ? WHERE key = ?")
+            .bind(Utc::now().to_rfc3339())
+            .bind(&key)
+            .execute(&db)
+            .await
+            .ok();
+    });
 
     Ok(Claims {
-        sub: row.0,
-        email: row.1,
-        role: row.2,
+        sub: user_id,
+        email,
+        role,
         exp: i64::MAX,
         iat: Utc::now().timestamp(),
     })

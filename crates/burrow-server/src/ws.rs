@@ -108,24 +108,24 @@ impl Default for WsState {
 use crate::auth;
 use crate::state::AppState;
 
-/// WebSocket handler with optional authentication
+/// WebSocket handler with required authentication
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(query): Query<WsQuery>,
     State(app_state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    // Validate token if provided
+    // Authentication is always required for WebSocket connections
     let authenticated = if let Some(ref token) = query.token {
         auth::verify_token(token, &app_state.jwt_secret).is_ok()
     } else {
         false
     };
 
-    // If network_id filter is set, require authentication
-    if query.network_id.is_some() && !authenticated {
+    // Require authentication for all WebSocket connections
+    if !authenticated {
         return axum::response::Response::builder()
             .status(axum::http::StatusCode::UNAUTHORIZED)
-            .body(axum::body::Body::from("Authentication required for network-specific events"))
+            .body(axum::body::Body::from("Authentication required for WebSocket connection"))
             .unwrap()
             .into_response();
     }
@@ -135,7 +135,7 @@ pub async fn ws_handler(
         .into_response()
 }
 
-async fn handle_socket(socket: WebSocket, query: WsQuery, state: Arc<WsState>, authenticated: bool) {
+async fn handle_socket(socket: WebSocket, query: WsQuery, state: Arc<WsState>, _authenticated: bool) {
     let (mut sender, mut receiver) = socket.split();
 
     // Subscribe to broadcast channel
@@ -204,7 +204,7 @@ async fn handle_socket(socket: WebSocket, query: WsQuery, state: Arc<WsState>, a
                     }
                 }
             }
-            Ok(Message::Ping(data)) => {
+            Ok(Message::Ping(_data)) => {
                 // TCP-level ping - Axum handles pong automatically
                 tracing::debug!("Received WS ping (TCP level)");
             }

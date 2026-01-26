@@ -24,9 +24,11 @@ pub struct AppError(anyhow::Error);
 
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
+        // Log detailed error internally, return generic message to client
+        tracing::error!("Internal error: {}", self.0);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": self.0.to_string() })),
+            Json(serde_json::json!({ "error": "An internal error occurred" })),
         )
             .into_response()
     }
@@ -54,6 +56,19 @@ pub async fn create_network(
     Extension(claims): Extension<Claims>,
     Json(req): Json<CreateNetworkRequest>,
 ) -> AppResult<Json<Network>> {
+    // Validate network name
+    let name = req.name.trim();
+    if name.is_empty() || name.len() > 100 {
+        return Err(anyhow::anyhow!("Network name must be between 1 and 100 characters").into());
+    }
+
+    // Validate CIDR if provided
+    if let Some(ref cidr) = req.cidr {
+        if !is_valid_cidr(cidr) {
+            return Err(anyhow::anyhow!("Invalid CIDR format. Expected: x.x.x.x/y").into());
+        }
+    }
+
     let network = Network {
         id: Uuid::new_v4(),
         name: req.name,
@@ -296,6 +311,9 @@ pub async fn create_invite(
     let code = generate_invite_code();
     let expires_at = Utc::now() + chrono::Duration::days(7);
 
+    // Default max_uses to 10 to prevent unlimited invite sharing
+    const DEFAULT_MAX_USES: i32 = 10;
+
     sqlx::query(
         "INSERT INTO invites (code, network_id, created_by, expires_at, max_uses, uses) VALUES (?, ?, ?, ?, ?, 0)"
     )
@@ -303,7 +321,7 @@ pub async fn create_invite(
     .bind(&network_id)
     .bind(&claims.sub)
     .bind(expires_at.to_rfc3339())
-    .bind(Option::<i32>::None)
+    .bind(DEFAULT_MAX_USES)
     .execute(&state.db)
     .await?;
 
@@ -335,6 +353,25 @@ pub async fn register_node(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RegisterNodeRequest>,
 ) -> AppResult<Json<RegisterNodeResponse>> {
+    // Validate node name
+    let node_name = req.name.trim();
+    if node_name.is_empty() || node_name.len() > 100 {
+        return Err(anyhow::anyhow!("Node name must be between 1 and 100 characters").into());
+    }
+
+    // Validate public key (must be valid base64 and decode to exactly 32 bytes)
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let decoded_key = STANDARD.decode(&req.public_key)
+        .map_err(|_| anyhow::anyhow!("Invalid base64 in public key"))?;
+    if decoded_key.len() != 32 {
+        return Err(anyhow::anyhow!("Public key must decode to exactly 32 bytes").into());
+    }
+
+    // Validate invite code format (alphanumeric, 8 chars)
+    if req.invite_code.len() != 8 || !req.invite_code.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(anyhow::anyhow!("Invalid invite code format").into());
+    }
+
     // Verify invite code
     let invite = sqlx::query_as::<_, (String, String, Option<i32>, i32)>(
         "SELECT code, network_id, max_uses, uses FROM invites
@@ -500,6 +537,33 @@ pub async fn heartbeat(
 
 // === Helpers ===
 
+/// Validate CIDR format (e.g., "10.100.0.0/16")
+fn is_valid_cidr(cidr: &str) -> bool {
+    let parts: Vec<&str> = cidr.split('/').collect();
+    if parts.len() != 2 {
+        return false;
+    }
+
+    // Validate IP part
+    let ip_parts: Vec<&str> = parts[0].split('.').collect();
+    if ip_parts.len() != 4 {
+        return false;
+    }
+
+    for part in &ip_parts {
+        match part.parse::<u8>() {
+            Ok(_) => continue,
+            Err(_) => return false,
+        }
+    }
+
+    // Validate prefix length
+    match parts[1].parse::<u8>() {
+        Ok(prefix) => prefix <= 32,
+        Err(_) => false,
+    }
+}
+
 fn generate_invite_code() -> String {
     use rand::Rng;
     const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -560,9 +624,11 @@ async fn allocate_mesh_ip(
         anyhow::bail!("Network {} has no available IP addresses", cidr);
     }
 
-    // Convert base IP to u32, add offset, convert back
+    // Convert base IP to u32, add offset, convert back (with overflow protection)
     let base_u32 = u32::from_be_bytes([octets[0], octets[1], octets[2], octets[3]]);
-    let new_ip_u32 = base_u32 + node_num;
+    let new_ip_u32 = base_u32
+        .checked_add(node_num)
+        .ok_or_else(|| anyhow::anyhow!("IP address overflow - network {} is full", cidr))?;
     let new_octets = new_ip_u32.to_be_bytes();
 
     let ip = format!(

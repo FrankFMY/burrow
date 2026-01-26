@@ -73,8 +73,10 @@ impl WireGuard {
         }
         
         // Set private key via temp file (wg requires file input)
-        // Use secure permissions (0600) to prevent other users from reading
-        let key_file = "/tmp/burrow_wg_key";
+        // Use secure permissions (0600) and random suffix to prevent race conditions
+        use rand::Rng;
+        let random_suffix: u64 = rand::thread_rng().gen();
+        let key_file = format!("/tmp/burrow_wg_key_{:016x}", random_suffix);
 
         #[cfg(unix)]
         {
@@ -83,23 +85,23 @@ impl WireGuard {
                 .create(true)
                 .truncate(true)
                 .mode(0o600)
-                .open(key_file)
+                .open(&key_file)
                 .context("Failed to create secure key file")?;
             file.write_all(self.config.private_key.as_bytes())?;
         }
 
         #[cfg(not(unix))]
         {
-            std::fs::write(key_file, &self.config.private_key)?;
+            std::fs::write(&key_file, &self.config.private_key)?;
         }
-        
+
         let wg_result = Command::new("sudo")
-            .args(["wg", "set", iface, "private-key", key_file, "listen-port",
+            .args(["wg", "set", iface, "private-key", &key_file, "listen-port",
                    &self.config.listen_port.to_string()])
             .status();
 
         // Always remove temp key file, even on error
-        let _ = std::fs::remove_file(key_file);
+        let _ = std::fs::remove_file(&key_file);
 
         let status = wg_result.context("Failed to set WireGuard private key")?;
 

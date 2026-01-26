@@ -21,6 +21,7 @@ use crate::state::AppState;
 const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
 const MAX_REQUESTS_PER_WINDOW: u32 = 60; // 60 requests per minute
 const AUTH_MAX_REQUESTS: u32 = 10; // 10 auth attempts per minute
+const MAX_BUCKETS: usize = 100_000; // Maximum tracked IPs to prevent memory exhaustion
 
 /// Rate limit state stored in app state
 #[derive(Default)]
@@ -41,6 +42,17 @@ impl RateLimitState {
     pub async fn check_and_increment(&self, ip: IpAddr, limit: u32) -> bool {
         let mut buckets = self.buckets.write().await;
         let now = Instant::now();
+
+        // Prevent memory exhaustion - if too many buckets, cleanup expired first
+        if buckets.len() >= MAX_BUCKETS && !buckets.contains_key(&ip) {
+            buckets.retain(|_, bucket| now.duration_since(bucket.window_start) <= RATE_LIMIT_WINDOW);
+
+            // If still at limit after cleanup, reject new IPs
+            if buckets.len() >= MAX_BUCKETS {
+                tracing::warn!("Rate limiter at capacity ({} buckets), rejecting new IP", MAX_BUCKETS);
+                return false;
+            }
+        }
 
         let bucket = buckets.entry(ip).or_insert(RateBucket {
             count: 0,

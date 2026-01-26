@@ -69,8 +69,8 @@ async fn main() -> Result<()> {
         });
 
     // Create app state
-    let app_state = Arc::new(AppState::new(pool, jwt_secret));
-    let derp_state = Arc::new(DerpState::new());
+    let app_state = Arc::new(AppState::new(pool.clone(), jwt_secret));
+    let derp_state = Arc::new(DerpState::new(pool));
 
     // Public routes (no auth required)
     let public_routes = Router::new()

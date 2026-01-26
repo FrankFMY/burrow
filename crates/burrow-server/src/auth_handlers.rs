@@ -15,6 +15,41 @@ use crate::audit::{log_event, AuditEvent, AuditEventType};
 use crate::auth::{self, Claims};
 use crate::state::AppState;
 
+// === Validation helpers ===
+
+/// Simple email validation (checks for @ and . in domain)
+fn is_valid_email(email: &str) -> bool {
+    let email = email.trim();
+    if email.len() > 254 || email.is_empty() {
+        return false;
+    }
+
+    let parts: Vec<&str> = email.split('@').collect();
+    if parts.len() != 2 {
+        return false;
+    }
+
+    let (local, domain) = (parts[0], parts[1]);
+
+    // Local part validation
+    if local.is_empty() || local.len() > 64 {
+        return false;
+    }
+
+    // Domain validation
+    if domain.is_empty() || !domain.contains('.') || domain.len() > 253 {
+        return false;
+    }
+
+    // Domain parts must not be empty
+    let domain_parts: Vec<&str> = domain.split('.').collect();
+    if domain_parts.iter().any(|p| p.is_empty()) {
+        return false;
+    }
+
+    true
+}
+
 // === Request/Response types ===
 
 #[derive(Deserialize)]
@@ -84,6 +119,22 @@ pub async fn register(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RegisterRequest>,
 ) -> Result<Json<AuthResponse>, AuthHandlerError> {
+    // Validate email format
+    if !is_valid_email(&req.email) {
+        return Err(AuthHandlerError(
+            StatusCode::BAD_REQUEST,
+            "Invalid email format".to_string(),
+        ));
+    }
+
+    // Validate name
+    if req.name.trim().is_empty() || req.name.len() > 100 {
+        return Err(AuthHandlerError(
+            StatusCode::BAD_REQUEST,
+            "Name must be between 1 and 100 characters".to_string(),
+        ));
+    }
+
     // Check if user exists
     let existing = sqlx::query_scalar::<_, i32>(
         "SELECT COUNT(*) FROM users WHERE email = ?"
@@ -225,41 +276,8 @@ pub async fn login(
             .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
         if !valid_totp {
-            // Try backup code
-            let mut used_backup = false;
-            if let Some(ref codes_json) = backup_codes {
-                if let Ok(mut codes) = serde_json::from_str::<Vec<String>>(codes_json) {
-                    if let Some(pos) = codes.iter().position(|c| c == &totp_code) {
-                        // Remove used backup code
-                        codes.remove(pos);
-                        let updated_codes = serde_json::to_string(&codes).unwrap_or_default();
-
-                        // Update backup codes in DB
-                        sqlx::query("UPDATE users SET backup_codes = ? WHERE id = ?")
-                            .bind(&updated_codes)
-                            .bind(&user_id)
-                            .execute(&state.db)
-                            .await
-                            .ok();
-
-                        used_backup = true;
-
-                        // Audit log - backup code used
-                        log_event(
-                            &state.db,
-                            AuditEvent::new(AuditEventType::SettingsChanged)
-                                .with_user(&user_id, &email)
-                                .with_details(serde_json::json!({
-                                    "action": "backup_code_used",
-                                    "remaining_codes": codes.len()
-                                })),
-                        )
-                        .await;
-
-                        tracing::info!("Backup code used for user {}, {} codes remaining", email, codes.len());
-                    }
-                }
-            }
+            // Try backup code with atomic update to prevent race conditions
+            let used_backup = try_use_backup_code(&state.db, &user_id, &email, &totp_code, &backup_codes).await;
 
             if !used_backup {
                 // Audit log - failed 2FA
@@ -672,4 +690,66 @@ pub async fn totp_status(
         enabled: totp_enabled == 1,
         verified: totp_verified == 1,
     }))
+}
+
+/// Atomically try to use a backup code with race condition protection.
+/// Uses optimistic locking by re-checking backup codes during update.
+async fn try_use_backup_code(
+    db: &sqlx::SqlitePool,
+    user_id: &str,
+    email: &str,
+    code: &str,
+    backup_codes: &Option<String>,
+) -> bool {
+    let Some(codes_json) = backup_codes else {
+        return false;
+    };
+
+    let Ok(codes) = serde_json::from_str::<Vec<String>>(codes_json) else {
+        return false;
+    };
+
+    let Some(pos) = codes.iter().position(|c| c == code) else {
+        return false;
+    };
+
+    // Remove used backup code
+    let mut new_codes = codes.clone();
+    new_codes.remove(pos);
+    let updated_codes_json = serde_json::to_string(&new_codes).unwrap_or_default();
+
+    // Atomic update with optimistic locking:
+    // Only update if backup_codes still matches what we read (prevents race condition)
+    let result = sqlx::query(
+        "UPDATE users SET backup_codes = ? WHERE id = ? AND backup_codes = ?"
+    )
+    .bind(&updated_codes_json)
+    .bind(user_id)
+    .bind(codes_json)
+    .execute(db)
+    .await;
+
+    match result {
+        Ok(r) if r.rows_affected() > 0 => {
+            // Successfully used backup code
+            log_event(
+                db,
+                AuditEvent::new(AuditEventType::SettingsChanged)
+                    .with_user(user_id, email)
+                    .with_details(serde_json::json!({
+                        "action": "backup_code_used",
+                        "remaining_codes": new_codes.len()
+                    })),
+            )
+            .await;
+
+            tracing::info!("Backup code used for user {}, {} codes remaining", email, new_codes.len());
+            true
+        }
+        _ => {
+            // Either DB error or race condition (backup_codes changed)
+            tracing::warn!("Failed to use backup code for user {} - possible race condition", email);
+            false
+        }
+    }
 }
