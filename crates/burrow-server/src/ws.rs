@@ -72,7 +72,8 @@ pub struct WsQuery {
 pub struct WsState {
     /// Broadcast channel for events
     pub tx: broadcast::Sender<WsEvent>,
-    /// Connected clients per network
+    /// Connected clients per network (reserved for future per-network filtering)
+    #[allow(dead_code)]
     pub clients: RwLock<HashMap<String, Vec<String>>>,
 }
 
@@ -264,6 +265,7 @@ pub fn emit_node_joined(
 }
 
 /// Helper to emit node left event
+#[allow(dead_code)]
 pub fn emit_node_left(ws_state: &WsState, network_id: &str, node_id: &str) {
     ws_state.broadcast_network(
         network_id,

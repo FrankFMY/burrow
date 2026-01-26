@@ -18,6 +18,7 @@ use tokio::sync::{mpsc, RwLock};
 
 /// Connected DERP client
 struct DerpClient {
+    #[allow(dead_code)]
     public_key: String,
     tx: mpsc::Sender<Vec<u8>>,
 }
@@ -86,6 +87,7 @@ impl DerpState {
         }
     }
     
+    #[allow(dead_code)]
     pub async fn client_count(&self) -> usize {
         self.clients.read().await.len()
     }

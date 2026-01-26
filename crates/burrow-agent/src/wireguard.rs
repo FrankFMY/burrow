@@ -174,6 +174,7 @@ impl WireGuard {
     }
     
     /// Remove a peer from the WireGuard interface
+    #[allow(dead_code)]
     pub fn remove_peer(&self, public_key: &str) -> Result<()> {
         let iface = &self.config.interface_name;
         
@@ -190,6 +191,7 @@ impl WireGuard {
     }
     
     /// Get current interface status
+    #[allow(dead_code)]
     pub fn status(&self) -> Result<String> {
         let output = Command::new("sudo")
             .args(["wg", "show", &self.config.interface_name])

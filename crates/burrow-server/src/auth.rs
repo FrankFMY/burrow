@@ -109,6 +109,7 @@ pub async fn auth_middleware(
 }
 
 /// Optional auth middleware - doesn't require auth but extracts it if present
+#[allow(dead_code)]
 pub async fn optional_auth_middleware(
     State(state): State<Arc<AppState>>,
     mut request: Request,
@@ -130,6 +131,7 @@ pub async fn optional_auth_middleware(
 }
 
 /// Admin-only middleware
+#[allow(dead_code)]
 pub async fn admin_middleware(
     request: Request,
     next: Next,

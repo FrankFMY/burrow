@@ -45,10 +45,13 @@
     </div>
 
     {#if showCreate}
-        <div class="modal-bg" on:click={() => showCreate = false}>
-            <div class="modal" on:click|stopPropagation>
-                <h2>Create Network</h2>
+        <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+        <div class="modal-bg" role="presentation" on:click={() => showCreate = false} on:keydown={(e) => e.key === 'Escape' && (showCreate = false)}>
+            <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+            <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" on:click|stopPropagation on:keydown|stopPropagation>
+                <h2 id="modal-title">Create Network</h2>
                 <form on:submit|preventDefault={createNetwork}>
+                    <!-- svelte-ignore a11y_autofocus -->
                     <input type="text" bind:value={newName} placeholder="Network name" autofocus />
                     <div class="actions">
                         <button type="button" class="secondary" on:click={() => showCreate = false}>Cancel</button>

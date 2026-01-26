@@ -4,7 +4,7 @@ use axum::{
     body::Body,
     http::{header, Method, Request, StatusCode},
 };
-use serde_json::{json, Value};
+use serde_json::json;
 use tower::ServiceExt;
 
 mod common;

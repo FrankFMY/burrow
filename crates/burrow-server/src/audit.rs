@@ -73,6 +73,7 @@ impl AuditEvent {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_ip(mut self, ip: &str) -> Self {
         self.ip_address = Some(ip.to_string());
         self
@@ -128,6 +129,7 @@ impl AuditLogger {
     }
 
     /// Query audit events
+    #[allow(dead_code)]
     pub async fn query(
         &self,
         user_id: Option<&str>,

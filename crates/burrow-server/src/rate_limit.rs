@@ -139,7 +139,7 @@ fn extract_client_ip(request: &Request) -> IpAddr {
         {
             // Take the LAST IP (most recently added by trusted proxy)
             // NOT the first (which can be spoofed)
-            if let Some(ip) = xff.split(',').last().and_then(|s| s.trim().parse().ok()) {
+            if let Some(ip) = xff.split(',').next_back().and_then(|s| s.trim().parse().ok()) {
                 return ip;
             }
         }
