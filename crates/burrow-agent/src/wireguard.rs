@@ -73,10 +73,8 @@ impl WireGuard {
         }
         
         // Set private key via temp file (wg requires file input)
-        // Use secure permissions (0600) and random suffix to prevent race conditions
-        use rand::Rng;
-        let random_suffix: u64 = rand::thread_rng().gen();
-        let key_file = format!("/tmp/burrow_wg_key_{:016x}", random_suffix);
+        // Use secure permissions (0600) and UUID to prevent race conditions/prediction
+        let key_file = format!("/tmp/burrow_wg_key_{}", uuid::Uuid::new_v4());
 
         #[cfg(unix)]
         {

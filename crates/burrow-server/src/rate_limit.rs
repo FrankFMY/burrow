@@ -123,28 +123,45 @@ pub fn get_rate_limiter() -> &'static RateLimitState {
 }
 
 fn extract_client_ip(request: &Request) -> IpAddr {
-    // Try X-Forwarded-For header first (for reverse proxies)
-    if let Some(xff) = request
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|h| h.to_str().ok())
-    {
-        if let Some(ip) = xff.split(',').next().and_then(|s| s.trim().parse().ok()) {
-            return ip;
+    // SECURITY: Only trust proxy headers if TRUST_PROXY env var is set
+    // This prevents IP spoofing attacks where attackers set X-Forwarded-For
+    // to bypass rate limiting
+    let trust_proxy = std::env::var("TRUST_PROXY").unwrap_or_default() == "true";
+
+    if trust_proxy {
+        // Try X-Forwarded-For header (for reverse proxies)
+        // Only the LAST IP is trustworthy (added by our reverse proxy)
+        // Earlier IPs can be spoofed by the client
+        if let Some(xff) = request
+            .headers()
+            .get("x-forwarded-for")
+            .and_then(|h| h.to_str().ok())
+        {
+            // Take the LAST IP (most recently added by trusted proxy)
+            // NOT the first (which can be spoofed)
+            if let Some(ip) = xff.split(',').last().and_then(|s| s.trim().parse().ok()) {
+                return ip;
+            }
+        }
+
+        // Try X-Real-IP header
+        if let Some(xri) = request
+            .headers()
+            .get("x-real-ip")
+            .and_then(|h| h.to_str().ok())
+        {
+            if let Ok(ip) = xri.parse() {
+                return ip;
+            }
         }
     }
 
-    // Try X-Real-IP header
-    if let Some(xri) = request
-        .headers()
-        .get("x-real-ip")
-        .and_then(|h| h.to_str().ok())
-    {
-        if let Ok(ip) = xri.parse() {
-            return ip;
-        }
+    // Try to get real connection IP from extensions (if available)
+    // This would be set by the server framework from the actual TCP connection
+    if let Some(connect_info) = request.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>() {
+        return connect_info.0.ip();
     }
 
-    // Fallback to localhost
+    // Fallback to localhost (safe default - will rate limit all unknown sources together)
     "127.0.0.1".parse().unwrap()
 }

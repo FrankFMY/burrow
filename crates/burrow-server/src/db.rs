@@ -91,12 +91,14 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
 
     // Add 2FA columns to users table (SQLite migration)
     // Check if column exists before adding
-    let columns: Vec<(String,)> = sqlx::query_as("PRAGMA table_info(users)")
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
+    // PRAGMA table_info returns: (cid, name, type, notnull, dflt_value, pk)
+    let columns: Vec<(i32, String, String, i32, Option<String>, i32)> =
+        sqlx::query_as("PRAGMA table_info(users)")
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
 
-    let has_totp = columns.iter().any(|(name,)| name == "totp_secret");
+    let has_totp = columns.iter().any(|(_, name, _, _, _, _)| name == "totp_secret");
     if !has_totp {
         sqlx::query("ALTER TABLE users ADD COLUMN totp_secret TEXT")
             .execute(pool)
@@ -117,12 +119,13 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
     }
 
     // Add node_secret column to nodes table for heartbeat authentication
-    let node_columns: Vec<(String,)> = sqlx::query_as("PRAGMA table_info(nodes)")
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
+    let node_columns: Vec<(i32, String, String, i32, Option<String>, i32)> =
+        sqlx::query_as("PRAGMA table_info(nodes)")
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
 
-    let has_node_secret = node_columns.iter().any(|(name,)| name == "node_secret");
+    let has_node_secret = node_columns.iter().any(|(_, name, _, _, _, _)| name == "node_secret");
     if !has_node_secret {
         sqlx::query("ALTER TABLE nodes ADD COLUMN node_secret TEXT")
             .execute(pool)

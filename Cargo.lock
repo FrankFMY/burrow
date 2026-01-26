@@ -238,7 +238,6 @@ dependencies = [
  "burrow-core",
  "dirs",
  "futures-util",
- "rand 0.8.5",
  "reqwest",
  "serde",
  "serde_json",
@@ -247,6 +246,7 @@ dependencies = [
  "tokio-tungstenite 0.26.2",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

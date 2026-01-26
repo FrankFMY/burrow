@@ -47,7 +47,26 @@ impl AgentConfig {
             fs::create_dir_all(parent).await?;
         }
         let data = serde_json::to_string_pretty(self)?;
-        fs::write(&path, data).await?;
+
+        // Write config with restricted permissions (contains private key)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600) // Owner read/write only
+                .open(&path)?;
+            use std::io::Write;
+            file.write_all(data.as_bytes())?;
+        }
+
+        #[cfg(not(unix))]
+        {
+            fs::write(&path, data).await?;
+        }
+
         Ok(())
     }
 }
