@@ -58,10 +58,14 @@ pub fn create_token(user_id: &str, email: &str, role: &str, secret: &str) -> Res
 
 /// Verify JWT token
 pub fn verify_token(token: &str, secret: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
+    // Explicitly require HS256 algorithm to prevent algorithm confusion attacks
+    let mut validation = Validation::new(jsonwebtoken::Algorithm::HS256);
+    validation.validate_exp = true;
+
     let token_data = decode::<Claims>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),
-        &Validation::default(),
+        &validation,
     )?;
 
     Ok(token_data.claims)
@@ -199,11 +203,15 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, bcrypt::Bcryp
     bcrypt::verify(password, hash)
 }
 
-/// Generate random API key
+/// Generate random API key using cryptographically secure RNG
 pub fn generate_api_key() -> String {
-    use rand::Rng;
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha20Rng;
+
     const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let mut rng = rand::thread_rng();
+
+    // Use cryptographically secure RNG
+    let mut rng = ChaCha20Rng::from_entropy();
 
     let key: String = (0..32)
         .map(|_| {

@@ -36,17 +36,33 @@ impl DerpState {
         }
     }
 
-    /// Verify node_secret against database
+    /// Verify node_secret against database using constant-time comparison
     pub async fn verify_node_secret(&self, secret: &str) -> bool {
-        let result: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM nodes WHERE node_secret = ?"
+        // Fetch all node secrets to do constant-time comparison
+        // This prevents timing attacks that could enumerate valid secrets
+        let stored_secrets: Vec<String> = sqlx::query_scalar(
+            "SELECT node_secret FROM nodes WHERE node_secret IS NOT NULL"
         )
-        .bind(secret)
-        .fetch_optional(&self.db)
+        .fetch_all(&self.db)
         .await
-        .unwrap_or(None);
+        .unwrap_or_default();
 
-        result.is_some()
+        // Constant-time comparison against all secrets
+        let secret_bytes = secret.as_bytes();
+        let mut found = false;
+        for stored in &stored_secrets {
+            let stored_bytes = stored.as_bytes();
+            if stored_bytes.len() == secret_bytes.len() {
+                let mut result = 0u8;
+                for (a, b) in stored_bytes.iter().zip(secret_bytes.iter()) {
+                    result |= a ^ b;
+                }
+                if result == 0 {
+                    found = true;
+                }
+            }
+        }
+        found
     }
     
     async fn register(&self, public_key: String, tx: mpsc::Sender<Vec<u8>>) {

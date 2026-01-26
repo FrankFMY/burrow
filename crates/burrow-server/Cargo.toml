@@ -20,6 +20,7 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 rand = { workspace = true }
+rand_chacha = "0.3"
 futures-util = "0.3"
 bcrypt = "0.16"
 jsonwebtoken = "9"

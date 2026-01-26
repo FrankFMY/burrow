@@ -163,32 +163,37 @@ pub async fn register(
     let password_hash = auth::hash_password(&req.password)
         .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Create user
+    // Create user with atomic first-admin detection to prevent race conditions
     let user_id = Uuid::new_v4().to_string();
     let now = Utc::now();
 
-    // First user becomes admin
-    let user_count: i32 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
-        .fetch_one(&state.db)
-        .await
-        .unwrap_or(0);
-    let role = if user_count == 0 { "admin" } else { "user" };
-
+    // Use atomic INSERT with subquery to determine role
+    // This prevents race condition where multiple users register simultaneously
+    // and all get "admin" role
     sqlx::query(
-        "INSERT INTO users (id, email, password_hash, name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+        "INSERT INTO users (id, email, password_hash, name, role, created_at)
+         VALUES (?, ?, ?, ?,
+                 CASE WHEN (SELECT COUNT(*) FROM users) = 0 THEN 'admin' ELSE 'user' END,
+                 ?)"
     )
     .bind(&user_id)
     .bind(&req.email)
     .bind(&password_hash)
     .bind(&req.name)
-    .bind(role)
     .bind(now.to_rfc3339())
     .execute(&state.db)
     .await
     .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Fetch the actual role that was assigned
+    let role: String = sqlx::query_scalar("SELECT role FROM users WHERE id = ?")
+        .bind(&user_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     // Create token
-    let token = auth::create_token(&user_id, &req.email, role, &state.jwt_secret)
+    let token = auth::create_token(&user_id, &req.email, &role, &state.jwt_secret)
         .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Audit log
@@ -198,7 +203,7 @@ pub async fn register(
             .with_user(&user_id, &req.email)
             .with_details(serde_json::json!({
                 "name": &req.name,
-                "role": role
+                "role": &role
             })),
     )
     .await;
@@ -211,7 +216,7 @@ pub async fn register(
             id: user_id,
             email: req.email,
             name: req.name,
-            role: role.to_string(),
+            role,
         },
     }))
 }
@@ -518,14 +523,19 @@ pub async fn enable_totp(
     let otpauth_uri = totp::get_otpauth_uri(&secret, &claims.email)
         .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    // Generate backup codes
-    let backup_codes: Vec<String> = (0..10)
-        .map(|_| {
-            use rand::Rng;
-            let code: u32 = rand::thread_rng().gen_range(10000000..99999999);
-            format!("{:08}", code)
-        })
-        .collect();
+    // Generate backup codes using cryptographically secure RNG
+    let backup_codes: Vec<String> = {
+        use rand::{Rng, SeedableRng};
+        use rand_chacha::ChaCha20Rng;
+
+        let mut rng = ChaCha20Rng::from_entropy();
+        (0..10)
+            .map(|_| {
+                let code: u32 = rng.gen_range(10000000..99999999);
+                format!("{:08}", code)
+            })
+            .collect()
+    };
 
     let backup_codes_json = serde_json::to_string(&backup_codes)
         .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

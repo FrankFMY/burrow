@@ -128,6 +128,13 @@ fn parse_xor_mapped_address(data: &[u8], transaction_id: &[u8; 12]) -> Result<So
             break;
         }
 
+        // Minimum attribute length for any mapped address: 1 (reserved) + 1 (family) + 2 (port) = 4 bytes
+        if attr_len < 4 {
+            pos += attr_len;
+            pos = (pos + 3) & !3;
+            continue;
+        }
+
         if attr_type == XOR_MAPPED_ADDRESS {
             let family = data[pos + 1];
             let xor_port = u16::from_be_bytes([data[pos + 2], data[pos + 3]]);
@@ -135,6 +142,10 @@ fn parse_xor_mapped_address(data: &[u8], transaction_id: &[u8; 12]) -> Result<So
 
             if family == 0x01 && attr_len >= 8 {
                 // IPv4: XOR with magic cookie only
+                // Bounds check: need pos + 4..pos + 8
+                if pos + 8 > data.len() {
+                    break;
+                }
                 let xor_ip =
                     u32::from_be_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]]);
                 let ip = xor_ip ^ MAGIC_COOKIE;
@@ -144,6 +155,10 @@ fn parse_xor_mapped_address(data: &[u8], transaction_id: &[u8; 12]) -> Result<So
                 return Ok(SocketAddr::new(addr.into(), port));
             } else if family == 0x02 && attr_len >= 20 {
                 // IPv6: XOR with magic cookie + transaction ID (RFC 5389)
+                // Bounds check: need pos + 4..pos + 20
+                if pos + 20 > data.len() {
+                    break;
+                }
                 let mut xor_key = [0u8; 16];
                 xor_key[0..4].copy_from_slice(&MAGIC_COOKIE.to_be_bytes());
                 xor_key[4..16].copy_from_slice(transaction_id);
@@ -161,6 +176,10 @@ fn parse_xor_mapped_address(data: &[u8], transaction_id: &[u8; 12]) -> Result<So
             let port = u16::from_be_bytes([data[pos + 2], data[pos + 3]]);
 
             if family == 0x01 && attr_len >= 8 {
+                // Bounds check: need pos + 4..pos + 8
+                if pos + 8 > data.len() {
+                    break;
+                }
                 let addr = std::net::Ipv4Addr::new(
                     data[pos + 4],
                     data[pos + 5],
@@ -169,6 +188,10 @@ fn parse_xor_mapped_address(data: &[u8], transaction_id: &[u8; 12]) -> Result<So
                 );
                 return Ok(SocketAddr::new(addr.into(), port));
             } else if family == 0x02 && attr_len >= 20 {
+                // Bounds check: need pos + 4..pos + 20
+                if pos + 20 > data.len() {
+                    break;
+                }
                 let mut ip_bytes = [0u8; 16];
                 ip_bytes.copy_from_slice(&data[pos + 4..pos + 20]);
                 let addr = std::net::Ipv6Addr::from(ip_bytes);

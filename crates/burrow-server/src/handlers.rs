@@ -372,26 +372,30 @@ pub async fn register_node(
         return Err(anyhow::anyhow!("Invalid invite code format").into());
     }
 
-    // Verify invite code
-    let invite = sqlx::query_as::<_, (String, String, Option<i32>, i32)>(
-        "SELECT code, network_id, max_uses, uses FROM invites
-         WHERE code = ? AND expires_at > datetime('now')"
+    // Atomically claim invite slot to prevent race conditions (TOCTOU)
+    // This UPDATE will only succeed if uses < max_uses, preventing concurrent use
+    let update_result = sqlx::query(
+        "UPDATE invites SET uses = uses + 1
+         WHERE code = ? AND expires_at > datetime('now')
+         AND (max_uses IS NULL OR uses < max_uses)"
+    )
+    .bind(&req.invite_code)
+    .execute(&state.db)
+    .await
+    .map_err(|_| anyhow::anyhow!("Database error"))?;
+
+    if update_result.rows_affected() == 0 {
+        return Err(anyhow::anyhow!("Invalid, expired, or exhausted invite code").into());
+    }
+
+    // Now fetch the network_id (invite is already claimed)
+    let network_id: String = sqlx::query_scalar(
+        "SELECT network_id FROM invites WHERE code = ?"
     )
     .bind(&req.invite_code)
     .fetch_one(&state.db)
     .await
-    .map_err(|_| anyhow::anyhow!("Invalid or expired invite code"))?;
-
-    // Check if invite has reached max uses
-    let max_uses = invite.2;
-    let current_uses = invite.3;
-    if let Some(max) = max_uses {
-        if current_uses >= max {
-            return Err(anyhow::anyhow!("Invite code has reached maximum uses").into());
-        }
-    }
-
-    let network_id = invite.1;
+    .map_err(|_| anyhow::anyhow!("Invite code not found"))?;
 
     // Get network info
     let network_row = sqlx::query_as::<_, (String, String)>(
@@ -436,13 +440,7 @@ pub async fn register_node(
     .execute(&state.db)
     .await?;
 
-    // Update invite uses
-    sqlx::query("UPDATE invites SET uses = uses + 1 WHERE code = ?")
-        .bind(&req.invite_code)
-        .execute(&state.db)
-        .await?;
-
-    // Audit log - invite used
+    // Audit log - invite used (uses already incremented atomically above)
     log_event(
         &state.db,
         AuditEvent::new(AuditEventType::InviteUsed)
@@ -512,8 +510,13 @@ pub async fn heartbeat(
     .fetch_one(&state.db)
     .await?;
 
-    // Verify secret
-    if stored_secret.as_ref() != Some(&req.node_secret) {
+    // Verify secret using constant-time comparison to prevent timing attacks
+    let valid_secret = stored_secret
+        .as_ref()
+        .map(|s| constant_time_compare(s.as_bytes(), req.node_secret.as_bytes()))
+        .unwrap_or(false);
+
+    if !valid_secret {
         return Err(anyhow::anyhow!("Invalid node secret").into());
     }
 
@@ -536,6 +539,18 @@ pub async fn heartbeat(
 }
 
 // === Helpers ===
+
+/// Constant-time comparison to prevent timing attacks
+fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut result = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        result |= x ^ y;
+    }
+    result == 0
+}
 
 /// Validate CIDR format (e.g., "10.100.0.0/16")
 fn is_valid_cidr(cidr: &str) -> bool {
@@ -565,9 +580,13 @@ fn is_valid_cidr(cidr: &str) -> bool {
 }
 
 fn generate_invite_code() -> String {
-    use rand::Rng;
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha20Rng;
+
     const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    let mut rng = rand::thread_rng();
+
+    // Use cryptographically secure RNG
+    let mut rng = ChaCha20Rng::from_entropy();
     (0..8)
         .map(|_| {
             let idx = rng.gen_range(0..CHARSET.len());
@@ -577,9 +596,13 @@ fn generate_invite_code() -> String {
 }
 
 fn generate_node_secret() -> String {
-    use rand::Rng;
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha20Rng;
+
     const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let mut rng = rand::thread_rng();
+
+    // Use cryptographically secure RNG
+    let mut rng = ChaCha20Rng::from_entropy();
     let secret: String = (0..32)
         .map(|_| {
             let idx = rng.gen_range(0..CHARSET.len());
