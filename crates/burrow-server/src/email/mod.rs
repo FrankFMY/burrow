@@ -5,7 +5,7 @@
 mod service;
 mod templates;
 
-pub use service::{EmailMessage, EmailProvider, EmailService};
+pub use service::{EmailMessage, EmailService};
 pub use templates::EmailTemplates;
 
 /// Create email service based on configuration

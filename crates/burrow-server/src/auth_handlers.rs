@@ -294,7 +294,7 @@ pub async fn register(
     )
     .await;
 
-    tracing::info!("User registered: {} ({})", req.email, user_id);
+    tracing::info!("User registered: {} ({})", crate::handlers::sanitize_for_log(&req.email), user_id);
 
     // Send verification email
     if let Ok(verification_token) = create_email_verification_token(&state.db, &user_id).await {
@@ -305,7 +305,7 @@ pub async fn register(
         if let Err(e) = email_service.send(message).await {
             tracing::error!("Failed to send verification email to {}: {}", req.email, e);
         } else {
-            tracing::info!("Verification email sent to {}", req.email);
+            tracing::info!("Verification email sent to {}", crate::handlers::sanitize_for_log(&req.email));
         }
     }
 
@@ -522,7 +522,7 @@ pub async fn login(
     )
     .await;
 
-    tracing::info!("User logged in: {}", req.email);
+    tracing::info!("User logged in: {}", crate::handlers::sanitize_for_log(&req.email));
 
     // Create httpOnly cookies for secure token storage
     let access_cookie = create_auth_cookie(&token);
@@ -602,7 +602,7 @@ pub async fn create_api_key(
     )
     .await;
 
-    tracing::info!("API key created: {} for user {}", req.name, claims.email);
+    tracing::info!("API key created: {} for user {}", crate::handlers::sanitize_for_log(&req.name), crate::handlers::sanitize_for_log(&claims.email));
 
     Ok(Json(ApiKeyResponse {
         id: key_id,
@@ -1225,7 +1225,7 @@ pub async fn resend_verification(
         // Don't return error to user - still log and continue
     }
 
-    tracing::info!("Verification email resent to {}", req.email);
+    tracing::info!("Verification email resent to {}", crate::handlers::sanitize_for_log(&req.email));
 
     Ok(Json(serde_json::json!({
         "message": "If the email exists and is not verified, a verification email will be sent"
@@ -1352,7 +1352,7 @@ pub async fn forgot_password(
         // Don't return error to user - still log and continue
     }
 
-    tracing::info!("Password reset requested for {}", req.email);
+    tracing::info!("Password reset requested for {}", crate::handlers::sanitize_for_log(&req.email));
 
     Ok(Json(serde_json::json!({
         "message": "If the email exists, a password reset link will be sent"

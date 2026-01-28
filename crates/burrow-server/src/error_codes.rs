@@ -17,6 +17,7 @@ pub struct ApiError {
     pub details: Option<serde_json::Value>,
 }
 
+#[allow(dead_code)]
 impl ApiError {
     pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
         Self {
@@ -43,6 +44,7 @@ impl ApiError {
 /// - 1500-1599: Server errors
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
+#[allow(dead_code)]
 pub enum ErrorCode {
     // Authentication (1000-1099)
     /// Invalid credentials (wrong email/password)
@@ -119,6 +121,7 @@ pub enum ErrorCode {
     ExternalServiceError = 1503,
 }
 
+#[allow(dead_code)]
 impl ErrorCode {
     pub fn as_u32(self) -> u32 {
         self as u32

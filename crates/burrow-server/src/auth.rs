@@ -80,8 +80,8 @@ pub fn generate_refresh_token() -> String {
 
 /// Hash refresh token for storage (SHA-256)
 pub fn hash_refresh_token(token: &str) -> String {
-    use sha1::Digest;
-    let mut hasher = sha1::Sha1::new();
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
     hasher.update(token.as_bytes());
     format!("{:x}", hasher.finalize())
 }

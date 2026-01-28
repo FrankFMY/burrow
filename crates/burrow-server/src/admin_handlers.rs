@@ -346,7 +346,7 @@ pub async fn list_all_networks(
     let offset = params.offset.unwrap_or(0).max(0);
     let limit = params.limit.unwrap_or(20).clamp(1, 100);
 
-    let (networks, total) = if let Some(ref search) = params.search {
+    let (admin_networks, total) = if let Some(ref search) = params.search {
         let search_pattern = format!("%{}%", search);
 
         let total: i64 = sqlx::query_scalar(
@@ -356,11 +356,13 @@ pub async fn list_all_networks(
         .fetch_one(&state.db)
         .await?;
 
-        let rows = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, String)>(
-            "SELECT n.id, n.name, n.cidr, n.owner_id, u.email, n.created_at
+        let rows = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, i64, String)>(
+            "SELECT n.id, n.name, n.cidr, n.owner_id, u.email, COUNT(nd.id) as node_count, n.created_at
              FROM networks n
              LEFT JOIN users u ON n.owner_id = u.id
+             LEFT JOIN nodes nd ON nd.network_id = n.id
              WHERE n.name LIKE ?
+             GROUP BY n.id
              ORDER BY n.created_at DESC LIMIT ? OFFSET ?"
         )
         .bind(&search_pattern)
@@ -375,10 +377,12 @@ pub async fn list_all_networks(
             .fetch_one(&state.db)
             .await?;
 
-        let rows = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, String)>(
-            "SELECT n.id, n.name, n.cidr, n.owner_id, u.email, n.created_at
+        let rows = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, i64, String)>(
+            "SELECT n.id, n.name, n.cidr, n.owner_id, u.email, COUNT(nd.id) as node_count, n.created_at
              FROM networks n
              LEFT JOIN users u ON n.owner_id = u.id
+             LEFT JOIN nodes nd ON nd.network_id = n.id
+             GROUP BY n.id
              ORDER BY n.created_at DESC LIMIT ? OFFSET ?"
         )
         .bind(limit)
@@ -389,27 +393,20 @@ pub async fn list_all_networks(
         (rows, total)
     };
 
-    // Get node counts for each network
-    let mut admin_networks = Vec::new();
-    for (id, name, cidr, owner_id, owner_email, created_at) in networks {
-        let node_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM nodes WHERE network_id = ?"
-        )
-        .bind(&id)
-        .fetch_one(&state.db)
-        .await
-        .unwrap_or(0);
-
-        admin_networks.push(AdminNetwork {
-            id,
-            name,
-            cidr,
-            owner_id,
-            owner_email,
-            node_count,
-            created_at,
-        });
-    }
+    let admin_networks: Vec<AdminNetwork> = admin_networks
+        .into_iter()
+        .map(|(id, name, cidr, owner_id, owner_email, node_count, created_at)| {
+            AdminNetwork {
+                id,
+                name,
+                cidr,
+                owner_id,
+                owner_email,
+                node_count,
+                created_at,
+            }
+        })
+        .collect();
 
     Ok(Json(ListNetworksResponse {
         networks: admin_networks,

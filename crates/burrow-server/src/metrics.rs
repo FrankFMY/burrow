@@ -46,6 +46,7 @@ pub async fn metrics_handler() -> impl IntoResponse {
 }
 
 /// Record an HTTP request
+#[allow(dead_code)]
 pub fn record_http_request(method: &str, path: &str, status: u16, duration: std::time::Duration) {
     let status_str = status.to_string();
     counter!("burrow_http_requests_total", "method" => method.to_string(), "path" => normalize_path(path), "status" => status_str).increment(1);
@@ -53,6 +54,7 @@ pub fn record_http_request(method: &str, path: &str, status: u16, duration: std:
 }
 
 /// Normalize path for metrics (remove IDs to reduce cardinality)
+#[allow(dead_code)]
 fn normalize_path(path: &str) -> String {
     // Replace UUIDs and numeric IDs with placeholders
     let path = path.trim_end_matches('/');
@@ -81,6 +83,7 @@ fn normalize_path(path: &str) -> String {
 }
 
 /// Record WebSocket connection change
+#[allow(dead_code)]
 pub fn record_ws_connection(delta: i64) {
     let current = gauge!("burrow_active_websocket_connections");
     if delta > 0 {
@@ -91,6 +94,7 @@ pub fn record_ws_connection(delta: i64) {
 }
 
 /// Record authentication attempt
+#[allow(dead_code)]
 pub fn record_auth_attempt(success: bool) {
     let success_str = if success { "true" } else { "false" };
     counter!("burrow_auth_attempts_total", "success" => success_str).increment(1);
@@ -114,12 +118,14 @@ pub fn set_nodes_by_status(online: i64, offline: i64, pending: i64) {
 }
 
 /// Middleware helper to time requests
+#[allow(dead_code)]
 pub struct RequestTimer {
     start: Instant,
     method: String,
     path: String,
 }
 
+#[allow(dead_code)]
 impl RequestTimer {
     pub fn new(method: &str, path: &str) -> Self {
         Self {

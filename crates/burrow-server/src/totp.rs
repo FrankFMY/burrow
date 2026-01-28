@@ -75,9 +75,9 @@ pub async fn verify_code_with_replay_protection(
     match result {
         Ok(_) => {
             // Successfully inserted - code is valid and first use
-            // Clean up old codes (older than 2 minutes - covers the 90 second window)
+            // Clean up old codes (older than 3 minutes - safely covers the 90 second TOTP window)
             let _ = sqlx::query(
-                "DELETE FROM totp_used_codes WHERE user_id = ? AND used_at < datetime('now', '-2 minutes')"
+                "DELETE FROM totp_used_codes WHERE user_id = ? AND used_at < datetime('now', '-3 minutes')"
             )
             .bind(user_id)
             .execute(pool)

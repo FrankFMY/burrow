@@ -121,8 +121,8 @@ pub async fn cleanup_expired_tokens(pool: &SqlitePool) {
         }
     }
 
-    // Delete old TOTP used codes (older than 2 minutes is safe)
-    let old_threshold = (Utc::now() - Duration::minutes(2)).to_rfc3339();
+    // Delete old TOTP used codes (older than 3 minutes safely covers 90s TOTP window)
+    let old_threshold = (Utc::now() - Duration::minutes(3)).to_rfc3339();
     let result = sqlx::query(
         "DELETE FROM totp_used_codes WHERE used_at < ?"
     )

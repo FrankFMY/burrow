@@ -89,6 +89,7 @@ async fn main() -> Result<()> {
     let cleanup_pool = pool.clone();
     let jobs_pool = pool.clone();
     let metrics_pool = pool.clone();
+    let tokens_pool = pool.clone();
     let app_state = Arc::new(AppState::new(pool.clone(), jwt_secret));
     let derp_state = Arc::new(DerpState::new(pool));
     let ws_state = app_state.ws.clone();
@@ -237,6 +238,15 @@ async fn main() -> Result<()> {
         loop {
             interval.tick().await;
             jobs::update_metrics_gauges(&metrics_pool).await;
+        }
+    });
+
+    // Start background task for cleaning up expired tokens
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600)); // Every hour
+        loop {
+            interval.tick().await;
+            jobs::cleanup_expired_tokens(&tokens_pool).await;
         }
     });
 

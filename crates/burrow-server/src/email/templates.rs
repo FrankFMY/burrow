@@ -2,6 +2,16 @@
 
 use super::EmailMessage;
 
+/// Escape HTML special characters to prevent XSS
+fn escape_html(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
 /// Email template generator
 pub struct EmailTemplates {
     app_name: String,
@@ -18,7 +28,7 @@ impl EmailTemplates {
 
     /// Generate email verification email
     pub fn email_verification(&self, to: &str, token: &str) -> EmailMessage {
-        let verification_url = format!("{}/verify-email?token={}", self.app_url, token);
+        let verification_url = format!("{}/verify-email?token={}", self.app_url, escape_html(token));
 
         let html_body = format!(
             r#"<!DOCTYPE html>
@@ -70,7 +80,7 @@ impl EmailTemplates {
 
     /// Generate password reset email
     pub fn password_reset(&self, to: &str, token: &str) -> EmailMessage {
-        let reset_url = format!("{}/reset-password?token={}", self.app_url, token);
+        let reset_url = format!("{}/reset-password?token={}", self.app_url, escape_html(token));
 
         let html_body = format!(
             r#"<!DOCTYPE html>
@@ -120,7 +130,9 @@ impl EmailTemplates {
     }
 
     /// Generate welcome email (sent after email verification)
+    #[allow(dead_code)]
     pub fn welcome(&self, to: &str, name: &str) -> EmailMessage {
+        let safe_name = escape_html(name);
         let html_body = format!(
             r#"<!DOCTYPE html>
 <html>
@@ -151,7 +163,7 @@ impl EmailTemplates {
 </body>
 </html>"#,
             app_name = self.app_name,
-            name = name,
+            name = safe_name,
             app_url = self.app_url
         );
 

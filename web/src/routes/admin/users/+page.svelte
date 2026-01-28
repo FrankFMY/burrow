@@ -183,8 +183,8 @@ function formatDate(dateStr: string): string {
 </div>
 
 {#if editingUser}
-<div class="modal-overlay" on:click={closeEdit} on:keydown={(e) => e.key === 'Escape' && closeEdit()}>
-    <div class="modal" on:click|stopPropagation role="dialog" aria-modal="true">
+<div class="modal-overlay" on:click={closeEdit} on:keydown={(e) => e.key === 'Escape' && closeEdit()} role="presentation">
+    <div class="modal" on:click|stopPropagation on:keydown|stopPropagation role="dialog" aria-modal="true" tabindex="-1">
         <h2>Edit User</h2>
         <p class="user-email">{editingUser.email}</p>
 

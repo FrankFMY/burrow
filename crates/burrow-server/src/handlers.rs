@@ -20,7 +20,7 @@ use crate::ws::{emit_network_deleted, emit_node_joined, emit_node_status};
 pub type AppResult<T> = Result<T, AppError>;
 
 /// Sanitize user input for safe logging (prevents log injection attacks)
-fn sanitize_for_log(input: &str) -> String {
+pub(crate) fn sanitize_for_log(input: &str) -> String {
     input
         .chars()
         .take(100) // Limit length

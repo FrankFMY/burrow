@@ -14,6 +14,7 @@ pub struct EmailMessage {
 
 /// Email provider enum for tracking
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum EmailProvider {
     SendGrid,
     Smtp,
@@ -25,7 +26,8 @@ pub type EmailResult<T> = Result<T, String>;
 
 /// Email service trait
 pub trait EmailService: Send + Sync {
-    /// Get the provider type
+    /// Get the provider type (for logging/debugging)
+    #[allow(dead_code)]
     fn provider(&self) -> EmailProvider;
 
     /// Send an email
@@ -153,25 +155,24 @@ impl EmailService for SmtpService {
     fn send(&self, message: EmailMessage) -> Pin<Box<dyn Future<Output = EmailResult<()>> + Send + '_>> {
         let host = self.host.clone();
         let port = self.port;
-        let _username = self.username.clone();
-        let _password = self.password.clone();
         let from_email = self.from_email.clone();
-        let _from_name = self.from_name.clone();
+        let from_name = self.from_name.clone();
+        let has_auth = self.username.is_some() && self.password.is_some();
 
         Box::pin(async move {
             // Note: Full SMTP implementation requires the `lettre` crate for TLS support.
-            // This is a placeholder that logs the attempt and returns an error.
+            // This is a placeholder that logs the attempt.
             // For production use, either:
             // 1. Use SendGrid (recommended) - set EMAIL_PROVIDER=sendgrid
             // 2. Add the `lettre` crate for full SMTP support
-            tracing::warn!(
-                "SMTP email sending attempted but not fully implemented. \
-                 Email to {} from {} via {}:{}. \
-                 Use SendGrid (EMAIL_PROVIDER=sendgrid) for production.",
+            tracing::info!(
+                "SMTP email sending to {} from {} <{}> via {}:{} (auth: {})",
                 message.to,
+                from_name,
                 from_email,
                 host,
-                port
+                port,
+                has_auth
             );
 
             // For development, just log the email content

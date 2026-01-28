@@ -294,9 +294,8 @@ export const adminApi = {
         if (params?.limit) searchParams.set('limit', String(params.limit));
         if (params?.search) searchParams.set('search', params.search);
         const query = searchParams.toString();
-        return request<{ users: AdminUser[]; total: number; offset: number; limit: number }>(
-            `/api/admin/users${query ? `?${query}` : ''}`
-        );
+        const endpoint = query ? `/api/admin/users?${query}` : '/api/admin/users';
+        return request<{ users: AdminUser[]; total: number; offset: number; limit: number }>(endpoint);
     },
 
     getUser: (id: string) => request<AdminUser>(`/api/admin/users/${id}`),
@@ -316,9 +315,8 @@ export const adminApi = {
         if (params?.limit) searchParams.set('limit', String(params.limit));
         if (params?.search) searchParams.set('search', params.search);
         const query = searchParams.toString();
-        return request<{ networks: AdminNetwork[]; total: number; offset: number; limit: number }>(
-            `/api/admin/networks${query ? `?${query}` : ''}`
-        );
+        const endpoint = query ? `/api/admin/networks?${query}` : '/api/admin/networks';
+        return request<{ networks: AdminNetwork[]; total: number; offset: number; limit: number }>(endpoint);
     },
 
     // Stats
@@ -332,9 +330,8 @@ export const adminApi = {
         if (params?.event_type) searchParams.set('event_type', params.event_type);
         if (params?.user_id) searchParams.set('user_id', params.user_id);
         const query = searchParams.toString();
-        return request<{ entries: AuditLogEntry[]; total: number; offset: number; limit: number }>(
-            `/api/admin/audit-log${query ? `?${query}` : ''}`
-        );
+        const endpoint = query ? `/api/admin/audit-log?${query}` : '/api/admin/audit-log';
+        return request<{ entries: AuditLogEntry[]; total: number; offset: number; limit: number }>(endpoint);
     },
 };
 
