@@ -38,10 +38,15 @@ impl IntoResponse for AuthError {
     }
 }
 
-/// Create JWT token for user
+/// Access token expiration (15 minutes)
+pub const ACCESS_TOKEN_EXPIRY_MINUTES: i64 = 15;
+/// Refresh token expiration (7 days)
+pub const REFRESH_TOKEN_EXPIRY_DAYS: i64 = 7;
+
+/// Create JWT access token for user (short-lived)
 pub fn create_token(user_id: &str, email: &str, role: &str, secret: &str) -> Result<String, jsonwebtoken::errors::Error> {
     let now = Utc::now();
-    let exp = now + Duration::hours(24);
+    let exp = now + Duration::minutes(ACCESS_TOKEN_EXPIRY_MINUTES);
 
     let claims = Claims {
         sub: user_id.to_string(),
@@ -56,6 +61,29 @@ pub fn create_token(user_id: &str, email: &str, role: &str, secret: &str) -> Res
         &claims,
         &EncodingKey::from_secret(secret.as_bytes()),
     )
+}
+
+/// Generate a secure refresh token
+pub fn generate_refresh_token() -> String {
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha20Rng;
+
+    let mut rng = ChaCha20Rng::from_entropy();
+    (0..64)
+        .map(|_| {
+            const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+            let idx = rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect()
+}
+
+/// Hash refresh token for storage (SHA-256)
+pub fn hash_refresh_token(token: &str) -> String {
+    use sha1::Digest;
+    let mut hasher = sha1::Sha1::new();
+    hasher.update(token.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 /// Verify JWT token

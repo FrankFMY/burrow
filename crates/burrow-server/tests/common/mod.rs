@@ -17,6 +17,9 @@ pub use burrow_server::{auth, auth_handlers, db, derp, handlers, state::AppState
 
 /// Create a test application with in-memory database
 pub async fn create_test_app() -> Router {
+    // Disable password breach check for tests
+    std::env::set_var("DISABLE_BREACH_CHECK", "1");
+
     // Create in-memory SQLite database
     let pool = SqlitePoolOptions::new()
         .max_connections(1)

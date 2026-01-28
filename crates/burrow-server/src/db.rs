@@ -94,6 +94,49 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_totp_used_codes_user ON totp_used_codes(user_id);
+
+        -- Login attempts tracking for account lockout
+        CREATE TABLE IF NOT EXISTS login_attempts (
+            id TEXT PRIMARY KEY,
+            email TEXT NOT NULL,
+            ip_address TEXT NOT NULL,
+            success INTEGER NOT NULL DEFAULT 0,
+            attempted_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_login_attempts_email ON login_attempts(email);
+        CREATE INDEX IF NOT EXISTS idx_login_attempts_ip ON login_attempts(ip_address);
+        CREATE INDEX IF NOT EXISTS idx_login_attempts_time ON login_attempts(attempted_at);
+
+        -- Email verification tokens
+        CREATE TABLE IF NOT EXISTS email_tokens (
+            token TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            token_type TEXT NOT NULL, -- 'verification' or 'password_reset'
+            expires_at TEXT NOT NULL,
+            used_at TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_email_tokens_user ON email_tokens(user_id);
+        CREATE INDEX IF NOT EXISTS idx_email_tokens_type ON email_tokens(token_type);
+        CREATE INDEX IF NOT EXISTS idx_email_tokens_expires ON email_tokens(expires_at);
+
+        -- Refresh tokens for JWT token refresh
+        CREATE TABLE IF NOT EXISTS refresh_tokens (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            revoked INTEGER NOT NULL DEFAULT 0,
+            replaced_by TEXT, -- Points to new token if rotated
+            user_agent TEXT,
+            ip_address TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
+        CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens(token_hash);
+        CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at);
         "#,
     )
     .execute(pool)
@@ -107,6 +150,15 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             .fetch_all(pool)
             .await
             .unwrap_or_default();
+
+    // Add email_verified column
+    let has_email_verified = columns.iter().any(|(_, name, _, _, _, _)| name == "email_verified");
+    if !has_email_verified {
+        sqlx::query("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await
+            .ok();
+    }
 
     let has_totp = columns.iter().any(|(_, name, _, _, _, _)| name == "totp_secret");
     if !has_totp {

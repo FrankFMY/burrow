@@ -1,7 +1,7 @@
 //! Authentication handlers
 
 use axum::{
-    extract::{Extension, State},
+    extract::{Extension, Request, State},
     http::{header, StatusCode},
     response::IntoResponse,
     Json,
@@ -14,21 +14,39 @@ use uuid::Uuid;
 
 use crate::audit::{log_event, AuditEvent, AuditEventType};
 use crate::auth::{self, Claims};
+use crate::lockout;
+use crate::password_check::{self, BreachCheckResult};
+use crate::rate_limit::extract_client_ip;
 use crate::state::AppState;
 
-/// Cookie name for JWT token
+/// Cookie name for JWT access token
 pub const AUTH_COOKIE_NAME: &str = "burrow_auth";
-/// Cookie max age in seconds (24 hours)
-const COOKIE_MAX_AGE_SECS: i64 = 24 * 60 * 60;
+/// Cookie name for refresh token
+pub const REFRESH_COOKIE_NAME: &str = "burrow_refresh";
+/// Access token cookie max age (15 minutes)
+const ACCESS_COOKIE_MAX_AGE_SECS: i64 = 15 * 60;
+/// Refresh token cookie max age (7 days)
+const REFRESH_COOKIE_MAX_AGE_SECS: i64 = 7 * 24 * 60 * 60;
 
-/// Create an httpOnly secure cookie for authentication
+/// Create an httpOnly secure cookie for access token
 fn create_auth_cookie(token: &str) -> Cookie<'static> {
     Cookie::build((AUTH_COOKIE_NAME.to_string(), token.to_string()))
         .http_only(true)
-        .secure(std::env::var("INSECURE_COOKIES").is_err()) // Only send over HTTPS in production
+        .secure(std::env::var("INSECURE_COOKIES").is_err())
         .same_site(SameSite::Strict)
         .path("/")
-        .max_age(time::Duration::seconds(COOKIE_MAX_AGE_SECS))
+        .max_age(time::Duration::seconds(ACCESS_COOKIE_MAX_AGE_SECS))
+        .build()
+}
+
+/// Create an httpOnly secure cookie for refresh token
+fn create_refresh_cookie(token: &str) -> Cookie<'static> {
+    Cookie::build((REFRESH_COOKIE_NAME.to_string(), token.to_string()))
+        .http_only(true)
+        .secure(std::env::var("INSECURE_COOKIES").is_err())
+        .same_site(SameSite::Strict)
+        .path("/api/auth/refresh") // Only sent to refresh endpoint
+        .max_age(time::Duration::seconds(REFRESH_COOKIE_MAX_AGE_SECS))
         .build()
 }
 
@@ -39,6 +57,17 @@ fn clear_auth_cookie() -> Cookie<'static> {
         .secure(std::env::var("INSECURE_COOKIES").is_err())
         .same_site(SameSite::Strict)
         .path("/")
+        .max_age(time::Duration::seconds(0))
+        .build()
+}
+
+/// Create a cookie that clears the refresh cookie
+fn clear_refresh_cookie() -> Cookie<'static> {
+    Cookie::build((REFRESH_COOKIE_NAME.to_string(), String::new()))
+        .http_only(true)
+        .secure(std::env::var("INSECURE_COOKIES").is_err())
+        .same_site(SameSite::Strict)
+        .path("/api/auth/refresh")
         .max_age(time::Duration::seconds(0))
         .build()
 }
@@ -197,6 +226,25 @@ pub async fn register(
         ));
     }
 
+    // Check if password has been exposed in data breaches
+    match password_check::check_password_breach(&req.password).await {
+        BreachCheckResult::Breached { count } => {
+            tracing::warn!(
+                "Registration attempt with breached password for email: {}",
+                req.email
+            );
+            return Err(AuthHandlerError(
+                StatusCode::BAD_REQUEST,
+                password_check::breach_warning_message(count),
+            ));
+        }
+        BreachCheckResult::CheckFailed(reason) => {
+            // Log but don't block registration if check fails
+            tracing::warn!("Password breach check failed: {}", reason);
+        }
+        BreachCheckResult::Safe => {}
+    }
+
     // Hash password
     let password_hash = auth::hash_password(&req.password)
         .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -248,6 +296,19 @@ pub async fn register(
 
     tracing::info!("User registered: {} ({})", req.email, user_id);
 
+    // Send verification email
+    if let Ok(verification_token) = create_email_verification_token(&state.db, &user_id).await {
+        let email_service = crate::email::create_email_service();
+        let templates = crate::email::EmailTemplates::new();
+        let message = templates.email_verification(&req.email, &verification_token);
+
+        if let Err(e) = email_service.send(message).await {
+            tracing::error!("Failed to send verification email to {}: {}", req.email, e);
+        } else {
+            tracing::info!("Verification email sent to {}", req.email);
+        }
+    }
+
     // Create httpOnly cookie for secure token storage
     let cookie = create_auth_cookie(&token);
     let cookie_header = [(header::SET_COOKIE, cookie.to_string())];
@@ -269,8 +330,39 @@ pub async fn register(
 /// Login user
 pub async fn login(
     State(state): State<Arc<AppState>>,
-    Json(req): Json<LoginRequest>,
+    request: Request,
 ) -> Result<impl IntoResponse, AuthHandlerError> {
+    // Extract IP address and User-Agent before consuming request body
+    let ip_address = extract_client_ip(&request).to_string();
+    let user_agent = request
+        .headers()
+        .get(header::USER_AGENT)
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_string());
+
+    // Extract JSON body
+    let body_bytes = axum::body::to_bytes(request.into_body(), 1024 * 16)
+        .await
+        .map_err(|_| AuthHandlerError(StatusCode::BAD_REQUEST, "Invalid request body".to_string()))?;
+
+    let req: LoginRequest = serde_json::from_slice(&body_bytes)
+        .map_err(|_| AuthHandlerError(StatusCode::BAD_REQUEST, "Invalid JSON".to_string()))?;
+
+    // Check if account is locked
+    if let Some(unlock_time) = lockout::check_lockout(&state.db, &req.email, &ip_address)
+        .await
+        .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    {
+        let remaining_minutes = (unlock_time - Utc::now()).num_minutes().max(1);
+        return Err(AuthHandlerError(
+            StatusCode::TOO_MANY_REQUESTS,
+            format!(
+                "Account temporarily locked due to too many failed login attempts. Try again in {} minutes.",
+                remaining_minutes
+            ),
+        ));
+    }
+
     // Find user with 2FA status and backup codes
     let user = sqlx::query_as::<_, (String, String, String, String, String, Option<String>, i32, Option<String>)>(
         "SELECT id, email, password_hash, name, role, totp_secret, COALESCE(totp_enabled, 0), backup_codes FROM users WHERE email = ?"
@@ -278,8 +370,19 @@ pub async fn login(
     .bind(&req.email)
     .fetch_optional(&state.db)
     .await
-    .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .ok_or_else(|| AuthHandlerError(StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()))?;
+    .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Handle user not found - record attempt and return generic error
+    let user = match user {
+        Some(u) => u,
+        None => {
+            // Record failed attempt even if user doesn't exist (prevents user enumeration timing attack)
+            lockout::record_attempt(&state.db, &req.email, &ip_address, false)
+                .await
+                .ok();
+            return Err(AuthHandlerError(StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()));
+        }
+    };
 
     let (user_id, email, password_hash, name, role, totp_secret, totp_enabled, backup_codes) = user;
 
@@ -288,11 +391,17 @@ pub async fn login(
         .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if !valid {
+        // Record failed attempt
+        lockout::record_attempt(&state.db, &req.email, &ip_address, false)
+            .await
+            .ok();
+
         // Audit log - failed login
         log_event(
             &state.db,
             AuditEvent::new(AuditEventType::UserLoginFailed)
                 .with_user(&user_id, &req.email)
+                .with_ip(&ip_address)
                 .with_details(serde_json::json!({
                     "reason": "invalid_password"
                 })),
@@ -352,11 +461,17 @@ pub async fn login(
             let used_backup = try_use_backup_code(&state.db, &user_id, &email, &totp_code, &backup_codes).await;
 
             if !used_backup {
+                // Record failed attempt
+                lockout::record_attempt(&state.db, &req.email, &ip_address, false)
+                    .await
+                    .ok();
+
                 // Audit log - failed 2FA
                 log_event(
                     &state.db,
                     AuditEvent::new(AuditEventType::UserLoginFailed)
                         .with_user(&user_id, &req.email)
+                        .with_ip(&ip_address)
                         .with_details(serde_json::json!({
                             "reason": "invalid_totp"
                         })),
@@ -371,6 +486,16 @@ pub async fn login(
         }
     }
 
+    // Clear failed attempts after successful login
+    lockout::clear_failed_attempts(&state.db, &req.email, &ip_address)
+        .await
+        .ok();
+
+    // Record successful login attempt
+    lockout::record_attempt(&state.db, &req.email, &ip_address, true)
+        .await
+        .ok();
+
     // Update last login
     sqlx::query("UPDATE users SET last_login = ? WHERE id = ?")
         .bind(Utc::now().to_rfc3339())
@@ -379,26 +504,35 @@ pub async fn login(
         .await
         .ok();
 
-    // Create token
+    // Create access token
     let token = auth::create_token(&user_id, &email, &role, &state.jwt_secret)
         .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Create refresh token
+    let refresh_token = create_refresh_token(&state.db, &user_id, user_agent.as_deref(), Some(&ip_address))
+        .await
+        .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     // Audit log - successful login
     log_event(
         &state.db,
         AuditEvent::new(AuditEventType::UserLogin)
-            .with_user(&user_id, &req.email),
+            .with_user(&user_id, &req.email)
+            .with_ip(&ip_address),
     )
     .await;
 
     tracing::info!("User logged in: {}", req.email);
 
-    // Create httpOnly cookie for secure token storage
-    let cookie = create_auth_cookie(&token);
-    let cookie_header = [(header::SET_COOKIE, cookie.to_string())];
+    // Create httpOnly cookies for secure token storage
+    let access_cookie = create_auth_cookie(&token);
+    let refresh_cookie = create_refresh_cookie(&refresh_token);
 
     Ok((
-        cookie_header,
+        [
+            (header::SET_COOKIE, access_cookie.to_string()),
+            (header::SET_COOKIE, refresh_cookie.to_string()),
+        ],
         Json(AuthResponse {
             token: token.clone(),
             user: UserInfo {
@@ -799,11 +933,14 @@ pub async fn totp_status(
     }))
 }
 
-/// Logout user - clears auth cookie
+/// Logout user - clears auth and refresh cookies, revokes refresh tokens
 pub async fn logout(
     Extension(claims): Extension<Claims>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
+    // Revoke all refresh tokens for this user
+    revoke_refresh_tokens(&state.db, &claims.sub).await;
+
     // Audit log
     log_event(
         &state.db,
@@ -814,10 +951,14 @@ pub async fn logout(
 
     tracing::info!("User logged out: {}", claims.email);
 
-    // Clear the auth cookie
-    let cookie = clear_auth_cookie();
+    // Clear both auth and refresh cookies
+    let access_cookie = clear_auth_cookie();
+    let refresh_cookie = clear_refresh_cookie();
     (
-        [(header::SET_COOKIE, cookie.to_string())],
+        [
+            (header::SET_COOKIE, access_cookie.to_string()),
+            (header::SET_COOKIE, refresh_cookie.to_string()),
+        ],
         StatusCode::NO_CONTENT,
     )
 }
@@ -882,4 +1023,649 @@ async fn try_use_backup_code(
             false
         }
     }
+}
+
+// ============================================================================
+// Email Verification
+// ============================================================================
+
+/// Token expiration times
+const EMAIL_VERIFICATION_EXPIRY_HOURS: i64 = 24;
+const PASSWORD_RESET_EXPIRY_HOURS: i64 = 1;
+
+/// Generate a secure random token
+fn generate_secure_token() -> String {
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha20Rng;
+
+    let mut rng = ChaCha20Rng::from_entropy();
+    (0..64)
+        .map(|_| {
+            const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+            let idx = rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect()
+}
+
+/// Create and store an email verification token
+pub async fn create_email_verification_token(
+    db: &sqlx::SqlitePool,
+    user_id: &str,
+) -> Result<String, String> {
+    let token = generate_secure_token();
+    let now = Utc::now();
+    let expires_at = now + chrono::Duration::hours(EMAIL_VERIFICATION_EXPIRY_HOURS);
+
+    sqlx::query(
+        "INSERT INTO email_tokens (token, user_id, token_type, expires_at, created_at)
+         VALUES (?, ?, 'verification', ?, ?)",
+    )
+    .bind(&token)
+    .bind(user_id)
+    .bind(expires_at.to_rfc3339())
+    .bind(now.to_rfc3339())
+    .execute(db)
+    .await
+    .map_err(|e| format!("Failed to create verification token: {}", e))?;
+
+    Ok(token)
+}
+
+/// Request types for email verification
+#[derive(Deserialize)]
+pub struct VerifyEmailRequest {
+    pub token: String,
+}
+
+#[derive(Deserialize)]
+pub struct ResendVerificationRequest {
+    pub email: String,
+}
+
+#[derive(Serialize)]
+pub struct EmailVerificationStatus {
+    pub verified: bool,
+}
+
+/// Verify email endpoint
+pub async fn verify_email(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<VerifyEmailRequest>,
+) -> Result<impl IntoResponse, AuthHandlerError> {
+    // Find token
+    let token_data = sqlx::query_as::<_, (String, String, Option<String>)>(
+        "SELECT user_id, expires_at, used_at FROM email_tokens
+         WHERE token = ? AND token_type = 'verification'",
+    )
+    .bind(&req.token)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or_else(|| AuthHandlerError(StatusCode::BAD_REQUEST, "Invalid or expired token".to_string()))?;
+
+    let (user_id, expires_at_str, used_at) = token_data;
+
+    // Check if already used
+    if used_at.is_some() {
+        return Err(AuthHandlerError(
+            StatusCode::BAD_REQUEST,
+            "Token has already been used".to_string(),
+        ));
+    }
+
+    // Check expiration
+    let expires_at = chrono::DateTime::parse_from_rfc3339(&expires_at_str)
+        .map_err(|_| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, "Invalid token data".to_string()))?;
+
+    if Utc::now() > expires_at {
+        return Err(AuthHandlerError(
+            StatusCode::BAD_REQUEST,
+            "Token has expired".to_string(),
+        ));
+    }
+
+    // Mark token as used
+    sqlx::query("UPDATE email_tokens SET used_at = ? WHERE token = ?")
+        .bind(Utc::now().to_rfc3339())
+        .bind(&req.token)
+        .execute(&state.db)
+        .await
+        .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Update user's email_verified status
+    sqlx::query("UPDATE users SET email_verified = 1 WHERE id = ?")
+        .bind(&user_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Get user email for audit log
+    let user_email: String = sqlx::query_scalar("SELECT email FROM users WHERE id = ?")
+        .bind(&user_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Audit log
+    log_event(
+        &state.db,
+        AuditEvent::new(AuditEventType::SettingsChanged)
+            .with_user(&user_id, &user_email)
+            .with_details(serde_json::json!({ "action": "email_verified" })),
+    )
+    .await;
+
+    tracing::info!("Email verified for user {}", user_email);
+
+    Ok(Json(serde_json::json!({
+        "message": "Email verified successfully"
+    })))
+}
+
+/// Resend verification email
+pub async fn resend_verification(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ResendVerificationRequest>,
+) -> Result<impl IntoResponse, AuthHandlerError> {
+    // Find user by email
+    let user = sqlx::query_as::<_, (String, String, i32)>(
+        "SELECT id, name, COALESCE(email_verified, 0) FROM users WHERE email = ?",
+    )
+    .bind(&req.email)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Don't reveal if email exists
+    let Some((user_id, _name, email_verified)) = user else {
+        // Still return success to prevent email enumeration
+        return Ok(Json(serde_json::json!({
+            "message": "If the email exists and is not verified, a verification email will be sent"
+        })));
+    };
+
+    if email_verified == 1 {
+        return Ok(Json(serde_json::json!({
+            "message": "Email is already verified"
+        })));
+    }
+
+    // Check rate limit - don't send more than 1 per 5 minutes
+    let recent_token: Option<String> = sqlx::query_scalar(
+        "SELECT token FROM email_tokens
+         WHERE user_id = ? AND token_type = 'verification'
+         AND datetime(created_at) > datetime('now', '-5 minutes')
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(&user_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if recent_token.is_some() {
+        return Err(AuthHandlerError(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Please wait 5 minutes before requesting another verification email".to_string(),
+        ));
+    }
+
+    // Create new verification token
+    let token = create_email_verification_token(&state.db, &user_id)
+        .await
+        .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    // Send verification email
+    let email_service = crate::email::create_email_service();
+    let templates = crate::email::EmailTemplates::new();
+    let message = templates.email_verification(&req.email, &token);
+
+    if let Err(e) = email_service.send(message).await {
+        tracing::error!("Failed to send verification email: {}", e);
+        // Don't return error to user - still log and continue
+    }
+
+    tracing::info!("Verification email resent to {}", req.email);
+
+    Ok(Json(serde_json::json!({
+        "message": "If the email exists and is not verified, a verification email will be sent"
+    })))
+}
+
+/// Get email verification status (requires auth)
+pub async fn email_verification_status(
+    Extension(claims): Extension<Claims>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<EmailVerificationStatus>, AuthHandlerError> {
+    let verified: i32 = sqlx::query_scalar(
+        "SELECT COALESCE(email_verified, 0) FROM users WHERE id = ?",
+    )
+    .bind(&claims.sub)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(EmailVerificationStatus {
+        verified: verified == 1,
+    }))
+}
+
+// ============================================================================
+// Password Reset
+// ============================================================================
+
+#[derive(Deserialize)]
+pub struct ForgotPasswordRequest {
+    pub email: String,
+}
+
+#[derive(Deserialize)]
+pub struct ResetPasswordRequest {
+    pub token: String,
+    pub new_password: String,
+}
+
+/// Create and store a password reset token
+async fn create_password_reset_token(
+    db: &sqlx::SqlitePool,
+    user_id: &str,
+) -> Result<String, String> {
+    let token = generate_secure_token();
+    let now = Utc::now();
+    let expires_at = now + chrono::Duration::hours(PASSWORD_RESET_EXPIRY_HOURS);
+
+    sqlx::query(
+        "INSERT INTO email_tokens (token, user_id, token_type, expires_at, created_at)
+         VALUES (?, ?, 'password_reset', ?, ?)",
+    )
+    .bind(&token)
+    .bind(user_id)
+    .bind(expires_at.to_rfc3339())
+    .bind(now.to_rfc3339())
+    .execute(db)
+    .await
+    .map_err(|e| format!("Failed to create password reset token: {}", e))?;
+
+    Ok(token)
+}
+
+/// Request password reset (public endpoint)
+pub async fn forgot_password(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ForgotPasswordRequest>,
+) -> Result<impl IntoResponse, AuthHandlerError> {
+    // Validate email format
+    if !is_valid_email(&req.email) {
+        // Still return generic success to prevent enumeration
+        return Ok(Json(serde_json::json!({
+            "message": "If the email exists, a password reset link will be sent"
+        })));
+    }
+
+    // Find user by email
+    let user = sqlx::query_as::<_, (String, String)>(
+        "SELECT id, name FROM users WHERE email = ?",
+    )
+    .bind(&req.email)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Don't reveal if email exists
+    let Some((user_id, _name)) = user else {
+        return Ok(Json(serde_json::json!({
+            "message": "If the email exists, a password reset link will be sent"
+        })));
+    };
+
+    // Check rate limit - don't send more than 1 per 5 minutes
+    let recent_token: Option<String> = sqlx::query_scalar(
+        "SELECT token FROM email_tokens
+         WHERE user_id = ? AND token_type = 'password_reset'
+         AND datetime(created_at) > datetime('now', '-5 minutes')
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(&user_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if recent_token.is_some() {
+        return Err(AuthHandlerError(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Please wait 5 minutes before requesting another password reset".to_string(),
+        ));
+    }
+
+    // Create password reset token
+    let token = create_password_reset_token(&state.db, &user_id)
+        .await
+        .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    // Send password reset email
+    let email_service = crate::email::create_email_service();
+    let templates = crate::email::EmailTemplates::new();
+    let message = templates.password_reset(&req.email, &token);
+
+    if let Err(e) = email_service.send(message).await {
+        tracing::error!("Failed to send password reset email: {}", e);
+        // Don't return error to user - still log and continue
+    }
+
+    tracing::info!("Password reset requested for {}", req.email);
+
+    Ok(Json(serde_json::json!({
+        "message": "If the email exists, a password reset link will be sent"
+    })))
+}
+
+/// Reset password with token (public endpoint)
+pub async fn reset_password(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ResetPasswordRequest>,
+) -> Result<impl IntoResponse, AuthHandlerError> {
+    // Validate new password
+    if req.new_password.len() < 8 || req.new_password.len() > 72 {
+        return Err(AuthHandlerError(
+            StatusCode::BAD_REQUEST,
+            "Password must be between 8 and 72 characters".to_string(),
+        ));
+    }
+
+    let has_letter = req.new_password.chars().any(|c| c.is_alphabetic());
+    let has_digit = req.new_password.chars().any(|c| c.is_ascii_digit());
+    if !has_letter || !has_digit {
+        return Err(AuthHandlerError(
+            StatusCode::BAD_REQUEST,
+            "Password must contain at least one letter and one number".to_string(),
+        ));
+    }
+
+    // Check password against breach database
+    match password_check::check_password_breach(&req.new_password).await {
+        BreachCheckResult::Breached { count } => {
+            return Err(AuthHandlerError(
+                StatusCode::BAD_REQUEST,
+                password_check::breach_warning_message(count),
+            ));
+        }
+        BreachCheckResult::CheckFailed(reason) => {
+            tracing::warn!("Password breach check failed during reset: {}", reason);
+        }
+        BreachCheckResult::Safe => {}
+    }
+
+    // Find token
+    let token_data = sqlx::query_as::<_, (String, String, Option<String>)>(
+        "SELECT user_id, expires_at, used_at FROM email_tokens
+         WHERE token = ? AND token_type = 'password_reset'",
+    )
+    .bind(&req.token)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or_else(|| AuthHandlerError(StatusCode::BAD_REQUEST, "Invalid or expired token".to_string()))?;
+
+    let (user_id, expires_at_str, used_at) = token_data;
+
+    // Check if already used
+    if used_at.is_some() {
+        return Err(AuthHandlerError(
+            StatusCode::BAD_REQUEST,
+            "Token has already been used".to_string(),
+        ));
+    }
+
+    // Check expiration
+    let expires_at = chrono::DateTime::parse_from_rfc3339(&expires_at_str)
+        .map_err(|_| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, "Invalid token data".to_string()))?;
+
+    if Utc::now() > expires_at {
+        return Err(AuthHandlerError(
+            StatusCode::BAD_REQUEST,
+            "Token has expired".to_string(),
+        ));
+    }
+
+    // Mark token as used
+    sqlx::query("UPDATE email_tokens SET used_at = ? WHERE token = ?")
+        .bind(Utc::now().to_rfc3339())
+        .bind(&req.token)
+        .execute(&state.db)
+        .await
+        .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Hash new password
+    let password_hash = auth::hash_password(&req.new_password)
+        .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Update password
+    sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+        .bind(&password_hash)
+        .bind(&user_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Get user email for notifications
+    let user_email: String = sqlx::query_scalar("SELECT email FROM users WHERE id = ?")
+        .bind(&user_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Send password changed notification
+    let email_service = crate::email::create_email_service();
+    let templates = crate::email::EmailTemplates::new();
+    let message = templates.password_changed(&user_email);
+
+    if let Err(e) = email_service.send(message).await {
+        tracing::error!("Failed to send password changed notification: {}", e);
+    }
+
+    // Audit log
+    log_event(
+        &state.db,
+        AuditEvent::new(AuditEventType::SettingsChanged)
+            .with_user(&user_id, &user_email)
+            .with_details(serde_json::json!({ "action": "password_reset" })),
+    )
+    .await;
+
+    tracing::info!("Password reset completed for {}", user_email);
+
+    Ok(Json(serde_json::json!({
+        "message": "Password has been reset successfully"
+    })))
+}
+
+// ============================================================================
+// Refresh Tokens
+// ============================================================================
+
+/// Create and store a refresh token
+async fn create_refresh_token(
+    db: &sqlx::SqlitePool,
+    user_id: &str,
+    user_agent: Option<&str>,
+    ip_address: Option<&str>,
+) -> Result<String, String> {
+    let token = auth::generate_refresh_token();
+    let token_hash = auth::hash_refresh_token(&token);
+    let id = Uuid::new_v4().to_string();
+    let now = Utc::now();
+    let expires_at = now + chrono::Duration::days(auth::REFRESH_TOKEN_EXPIRY_DAYS);
+
+    sqlx::query(
+        "INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at, user_agent, ip_address)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(user_id)
+    .bind(&token_hash)
+    .bind(expires_at.to_rfc3339())
+    .bind(now.to_rfc3339())
+    .bind(user_agent)
+    .bind(ip_address)
+    .execute(db)
+    .await
+    .map_err(|e| format!("Failed to create refresh token: {}", e))?;
+
+    Ok(token)
+}
+
+/// Response type including refresh status
+#[derive(Serialize)]
+pub struct AuthResponseWithRefresh {
+    pub token: String,
+    pub user: UserInfo,
+    pub expires_in: i64, // seconds until access token expires
+}
+
+/// Refresh access token endpoint
+pub async fn refresh_token(
+    State(state): State<Arc<AppState>>,
+    jar: axum_extra::extract::cookie::CookieJar,
+    request: Request,
+) -> Result<impl IntoResponse, AuthHandlerError> {
+    let ip_address = extract_client_ip(&request).to_string();
+    let user_agent = request
+        .headers()
+        .get(header::USER_AGENT)
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_string());
+
+    // Get refresh token from cookie
+    let refresh_token = jar.get(REFRESH_COOKIE_NAME)
+        .map(|c| c.value().to_string())
+        .ok_or_else(|| AuthHandlerError(
+            StatusCode::UNAUTHORIZED,
+            "No refresh token provided".to_string(),
+        ))?;
+
+    let token_hash = auth::hash_refresh_token(&refresh_token);
+
+    // Find refresh token
+    let token_data = sqlx::query_as::<_, (String, String, String, i32, Option<String>)>(
+        "SELECT id, user_id, expires_at, revoked, replaced_by FROM refresh_tokens WHERE token_hash = ?",
+    )
+    .bind(&token_hash)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or_else(|| AuthHandlerError(StatusCode::UNAUTHORIZED, "Invalid refresh token".to_string()))?;
+
+    let (token_id, user_id, expires_at_str, revoked, replaced_by) = token_data;
+
+    // Check if token is revoked
+    if revoked == 1 {
+        // Potential token theft - revoke all tokens for this user
+        tracing::warn!("Revoked refresh token used, potential token theft for user {}", user_id);
+
+        sqlx::query("UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?")
+            .bind(&user_id)
+            .execute(&state.db)
+            .await
+            .ok();
+
+        return Err(AuthHandlerError(
+            StatusCode::UNAUTHORIZED,
+            "Token has been revoked. Please login again.".to_string(),
+        ));
+    }
+
+    // Check if token was already replaced (replay attack)
+    if replaced_by.is_some() {
+        tracing::warn!("Refresh token replay detected for user {}", user_id);
+
+        // Revoke all tokens for security
+        sqlx::query("UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?")
+            .bind(&user_id)
+            .execute(&state.db)
+            .await
+            .ok();
+
+        return Err(AuthHandlerError(
+            StatusCode::UNAUTHORIZED,
+            "Token has been replaced. Please login again.".to_string(),
+        ));
+    }
+
+    // Check expiration
+    let expires_at = chrono::DateTime::parse_from_rfc3339(&expires_at_str)
+        .map_err(|_| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, "Invalid token data".to_string()))?;
+
+    if Utc::now() > expires_at {
+        return Err(AuthHandlerError(
+            StatusCode::UNAUTHORIZED,
+            "Refresh token has expired. Please login again.".to_string(),
+        ));
+    }
+
+    // Get user info
+    let user = sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT id, email, name, role FROM users WHERE id = ?",
+    )
+    .bind(&user_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or_else(|| AuthHandlerError(StatusCode::UNAUTHORIZED, "User not found".to_string()))?;
+
+    let (_, email, name, role) = user;
+
+    // Create new access token
+    let access_token = auth::create_token(&user_id, &email, &role, &state.jwt_secret)
+        .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Rotate refresh token (create new one, mark old as replaced)
+    let new_refresh_token = create_refresh_token(
+        &state.db,
+        &user_id,
+        user_agent.as_deref(),
+        Some(&ip_address),
+    )
+    .await
+    .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    // Mark old token as replaced
+    let new_token_hash = auth::hash_refresh_token(&new_refresh_token);
+    sqlx::query("UPDATE refresh_tokens SET replaced_by = ? WHERE id = ?")
+        .bind(&new_token_hash)
+        .bind(&token_id)
+        .execute(&state.db)
+        .await
+        .ok();
+
+    tracing::debug!("Token refreshed for user {}", email);
+
+    // Set cookies
+    let access_cookie = create_auth_cookie(&access_token);
+    let refresh_cookie = create_refresh_cookie(&new_refresh_token);
+
+    Ok((
+        [
+            (header::SET_COOKIE, access_cookie.to_string()),
+            (header::SET_COOKIE, refresh_cookie.to_string()),
+        ],
+        Json(AuthResponseWithRefresh {
+            token: access_token,
+            user: UserInfo {
+                id: user_id,
+                email,
+                name,
+                role,
+            },
+            expires_in: auth::ACCESS_TOKEN_EXPIRY_MINUTES * 60,
+        }),
+    ))
+}
+
+/// Revoke all refresh tokens for the current user (called on logout)
+pub async fn revoke_refresh_tokens(db: &sqlx::SqlitePool, user_id: &str) {
+    sqlx::query("UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ? AND revoked = 0")
+        .bind(user_id)
+        .execute(db)
+        .await
+        .ok();
 }

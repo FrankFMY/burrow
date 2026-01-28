@@ -128,7 +128,7 @@ pub fn get_rate_limiter() -> &'static RateLimitState {
     RATE_LIMITER.get_or_init(RateLimitState::new)
 }
 
-fn extract_client_ip(request: &Request) -> IpAddr {
+pub fn extract_client_ip(request: &Request) -> IpAddr {
     // SECURITY: Only trust proxy headers if TRUST_PROXY env var is set
     // This prevents IP spoofing attacks where attackers set X-Forwarded-For
     // to bypass rate limiting

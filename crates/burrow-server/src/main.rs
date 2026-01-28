@@ -23,7 +23,10 @@ mod auth;
 mod auth_handlers;
 mod db;
 mod derp;
+mod email;
 mod handlers;
+mod lockout;
+mod password_check;
 mod rate_limit;
 mod state;
 mod totp;
@@ -75,6 +78,7 @@ async fn main() -> Result<()> {
         });
 
     // Create app state
+    let cleanup_pool = pool.clone();
     let app_state = Arc::new(AppState::new(pool.clone(), jwt_secret));
     let derp_state = Arc::new(DerpState::new(pool));
 
@@ -83,6 +87,11 @@ async fn main() -> Result<()> {
         .route("/health", get(health))
         .route("/api/auth/register", post(auth_handlers::register))
         .route("/api/auth/login", post(auth_handlers::login))
+        .route("/api/auth/verify-email", post(auth_handlers::verify_email))
+        .route("/api/auth/resend-verification", post(auth_handlers::resend_verification))
+        .route("/api/auth/forgot-password", post(auth_handlers::forgot_password))
+        .route("/api/auth/reset-password", post(auth_handlers::reset_password))
+        .route("/api/auth/refresh", post(auth_handlers::refresh_token))
         .route("/api/register", post(handlers::register_node))
         .route("/api/nodes/{id}/heartbeat", post(handlers::heartbeat))
         // WebSocket for real-time updates
@@ -95,6 +104,8 @@ async fn main() -> Result<()> {
         .route("/api/auth/api-keys", get(auth_handlers::list_api_keys))
         .route("/api/auth/api-keys", post(auth_handlers::create_api_key))
         .route("/api/auth/api-keys/{id}", delete(auth_handlers::revoke_api_key))
+        // Email verification status (requires auth)
+        .route("/api/auth/email-status", get(auth_handlers::email_verification_status))
         // 2FA routes
         .route("/api/auth/totp", get(auth_handlers::totp_status))
         .route("/api/auth/totp/enable", post(auth_handlers::enable_totp))
@@ -159,6 +170,11 @@ async fn main() -> Result<()> {
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_FRAME_OPTIONS,
             header::HeaderValue::from_static("DENY"),
+        ))
+        // HSTS: Force HTTPS for 1 year including subdomains
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::STRICT_TRANSPORT_SECURITY,
+            header::HeaderValue::from_static("max-age=31536000; includeSubDomains"),
         ));
 
     // Start background cleanup task for rate limiter
@@ -168,6 +184,18 @@ async fn main() -> Result<()> {
             interval.tick().await;
             rate_limit::get_rate_limiter().cleanup().await;
             tracing::debug!("Rate limiter cleanup completed");
+        }
+    });
+
+    // Start background cleanup task for login attempts
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600)); // Every hour
+        loop {
+            interval.tick().await;
+            match lockout::cleanup_old_attempts(&cleanup_pool).await {
+                Ok(count) => tracing::debug!("Cleaned up {} old login attempts", count),
+                Err(e) => tracing::error!("Failed to cleanup login attempts: {}", e),
+            }
         }
     });
 

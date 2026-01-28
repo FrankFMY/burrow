@@ -113,6 +113,8 @@ async function handleSubmit() {
 
         <p class="footer">
             Don't have an account? <a href="/register">Register</a>
+            <br />
+            <a href="/forgot-password">Forgot your password?</a>
         </p>
     </div>
 </div>

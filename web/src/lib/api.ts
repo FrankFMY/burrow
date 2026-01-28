@@ -19,6 +19,33 @@ class ApiError extends Error {
     }
 }
 
+// Track if we're currently refreshing to avoid infinite loops
+let isRefreshing = false;
+
+async function tryRefreshToken(): Promise<boolean> {
+    if (isRefreshing) return false;
+
+    isRefreshing = true;
+    try {
+        const response = await fetch(`${API_BASE}/api/auth/refresh`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            auth.setAuth(data.token, data.user);
+            return true;
+        }
+        return false;
+    } catch {
+        return false;
+    } finally {
+        isRefreshing = false;
+    }
+}
+
 async function request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
     const { skipAuth, ...fetchOptions } = options;
     const customHeaders = fetchOptions.headers as Record<string, string> | undefined;
@@ -34,11 +61,28 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
         }
     }
 
-    const response = await fetch(`${API_BASE}${endpoint}`, {
+    let response = await fetch(`${API_BASE}${endpoint}`, {
         ...fetchOptions,
         headers,
         credentials: 'include', // Send cookies for httpOnly auth
     });
+
+    // Try to refresh token on 401 (unless already trying to refresh or skipAuth)
+    if (response.status === 401 && !skipAuth && browser && !isRefreshing) {
+        const refreshed = await tryRefreshToken();
+        if (refreshed) {
+            // Retry the original request with new token
+            const { token } = get(auth);
+            if (token) {
+                headers.Authorization = `Bearer ${token}`;
+            }
+            response = await fetch(`${API_BASE}${endpoint}`, {
+                ...fetchOptions,
+                headers,
+                credentials: 'include',
+            });
+        }
+    }
 
     if (!response.ok) {
         const error = await response.json().catch(() => ({ error: 'Unknown error' }));
@@ -113,6 +157,45 @@ export const authApi = {
             method: 'POST',
             body: JSON.stringify({ code }),
         }),
+
+    // Email verification
+    verifyEmail: (token: string) =>
+        request<{ message: string }>('/api/auth/verify-email', {
+            method: 'POST',
+            body: JSON.stringify({ token }),
+            skipAuth: true,
+        }),
+
+    resendVerification: (email: string) =>
+        request<{ message: string }>('/api/auth/resend-verification', {
+            method: 'POST',
+            body: JSON.stringify({ email }),
+            skipAuth: true,
+        }),
+
+    emailStatus: () => request<{ verified: boolean }>('/api/auth/email-status'),
+
+    // Password reset
+    forgotPassword: (email: string) =>
+        request<{ message: string }>('/api/auth/forgot-password', {
+            method: 'POST',
+            body: JSON.stringify({ email }),
+            skipAuth: true,
+        }),
+
+    resetPassword: (token: string, newPassword: string) =>
+        request<{ message: string }>('/api/auth/reset-password', {
+            method: 'POST',
+            body: JSON.stringify({ token, new_password: newPassword }),
+            skipAuth: true,
+        }),
+
+    // Token refresh
+    refreshToken: () =>
+        request<{ token: string; user: { id: string; email: string; name: string; role: string }; expires_in: number }>(
+            '/api/auth/refresh',
+            { method: 'POST', skipAuth: true }
+        ),
 };
 
 // Networks API
