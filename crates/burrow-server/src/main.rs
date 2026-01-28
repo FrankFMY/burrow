@@ -26,7 +26,9 @@ mod db;
 mod derp;
 mod email;
 mod handlers;
+mod jobs;
 mod lockout;
+mod metrics;
 mod password_check;
 mod rate_limit;
 mod state;
@@ -78,10 +80,17 @@ async fn main() -> Result<()> {
                 .collect()
         });
 
+    // Initialize metrics
+    metrics::init_metrics();
+    tracing::info!("✓ Metrics initialized");
+
     // Create app state
     let cleanup_pool = pool.clone();
+    let jobs_pool = pool.clone();
+    let metrics_pool = pool.clone();
     let app_state = Arc::new(AppState::new(pool.clone(), jwt_secret));
     let derp_state = Arc::new(DerpState::new(pool));
+    let ws_state = app_state.ws.clone();
 
     // Initialize server start time for uptime tracking
     admin_handlers::init_server_start_time();
@@ -89,6 +98,7 @@ async fn main() -> Result<()> {
     // Public routes (no auth required)
     let public_routes = Router::new()
         .route("/health", get(health))
+        .route("/metrics", get(metrics::metrics_handler))
         .route("/api/auth/register", post(auth_handlers::register))
         .route("/api/auth/login", post(auth_handlers::login))
         .route("/api/auth/verify-email", post(auth_handlers::verify_email))
@@ -208,6 +218,24 @@ async fn main() -> Result<()> {
                 Ok(count) => tracing::debug!("Cleaned up {} old login attempts", count),
                 Err(e) => tracing::error!("Failed to cleanup login attempts: {}", e),
             }
+        }
+    });
+
+    // Start background task for checking offline nodes
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60)); // Every minute
+        loop {
+            interval.tick().await;
+            jobs::check_offline_nodes(&jobs_pool, &ws_state).await;
+        }
+    });
+
+    // Start background task for updating metrics gauges
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30)); // Every 30 seconds
+        loop {
+            interval.tick().await;
+            jobs::update_metrics_gauges(&metrics_pool).await;
         }
     });
 

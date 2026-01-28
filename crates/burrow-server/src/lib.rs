@@ -7,6 +7,8 @@ pub mod audit;
 pub mod auth;
 pub mod auth_handlers;
 pub mod db;
+pub mod jobs;
+pub mod metrics;
 pub mod derp;
 pub mod email;
 pub mod handlers;
