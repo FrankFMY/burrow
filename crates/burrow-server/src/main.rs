@@ -18,6 +18,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+mod admin_handlers;
 mod audit;
 mod auth;
 mod auth_handlers;
@@ -82,6 +83,9 @@ async fn main() -> Result<()> {
     let app_state = Arc::new(AppState::new(pool.clone(), jwt_secret));
     let derp_state = Arc::new(DerpState::new(pool));
 
+    // Initialize server start time for uptime tracking
+    admin_handlers::init_server_start_time();
+
     // Public routes (no auth required)
     let public_routes = Router::new()
         .route("/health", get(health))
@@ -118,6 +122,14 @@ async fn main() -> Result<()> {
         .route("/api/networks/{id}", delete(handlers::delete_network))
         .route("/api/networks/{id}/nodes", get(handlers::list_nodes))
         .route("/api/networks/{id}/invite", post(handlers::create_invite))
+        // Admin routes (role check inside handlers)
+        .route("/api/admin/users", get(admin_handlers::list_users))
+        .route("/api/admin/users/{id}", get(admin_handlers::get_user))
+        .route("/api/admin/users/{id}", axum::routing::put(admin_handlers::update_user))
+        .route("/api/admin/users/{id}", delete(admin_handlers::delete_user))
+        .route("/api/admin/networks", get(admin_handlers::list_all_networks))
+        .route("/api/admin/stats", get(admin_handlers::get_stats))
+        .route("/api/admin/audit-log", get(admin_handlers::list_audit_log))
         .layer(middleware::from_fn_with_state(
             app_state.clone(),
             auth::auth_middleware,

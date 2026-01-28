@@ -17,7 +17,7 @@ use crate::auth::Claims;
 use crate::state::AppState;
 use crate::ws::{emit_network_deleted, emit_node_joined, emit_node_status};
 
-type AppResult<T> = Result<T, AppError>;
+pub type AppResult<T> = Result<T, AppError>;
 
 /// Sanitize user input for safe logging (prevents log injection attacks)
 fn sanitize_for_log(input: &str) -> String {

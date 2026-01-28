@@ -236,6 +236,108 @@ export const networksApi = {
         }),
 };
 
+// Admin API
+export interface AdminUser {
+    id: string;
+    email: string;
+    name: string;
+    role: string;
+    email_verified: boolean;
+    totp_enabled: boolean;
+    created_at: string;
+    last_login?: string;
+}
+
+export interface AdminNetwork {
+    id: string;
+    name: string;
+    cidr: string;
+    owner_id?: string;
+    owner_email?: string;
+    node_count: number;
+    created_at: string;
+}
+
+export interface SystemStats {
+    total_users: number;
+    verified_users: number;
+    admin_users: number;
+    total_networks: number;
+    total_nodes: number;
+    online_nodes: number;
+    offline_nodes: number;
+    pending_nodes: number;
+    active_sessions: number;
+    logins_today: number;
+    registrations_today: number;
+    server_version: string;
+    uptime_seconds: number;
+}
+
+export interface AuditLogEntry {
+    id: string;
+    event_type: string;
+    user_id?: string;
+    user_email?: string;
+    target_type?: string;
+    target_id?: string;
+    ip_address?: string;
+    details?: Record<string, unknown>;
+    created_at: string;
+}
+
+export const adminApi = {
+    // Users
+    listUsers: (params?: { offset?: number; limit?: number; search?: string }) => {
+        const searchParams = new URLSearchParams();
+        if (params?.offset) searchParams.set('offset', String(params.offset));
+        if (params?.limit) searchParams.set('limit', String(params.limit));
+        if (params?.search) searchParams.set('search', params.search);
+        const query = searchParams.toString();
+        return request<{ users: AdminUser[]; total: number; offset: number; limit: number }>(
+            `/api/admin/users${query ? `?${query}` : ''}`
+        );
+    },
+
+    getUser: (id: string) => request<AdminUser>(`/api/admin/users/${id}`),
+
+    updateUser: (id: string, data: { role?: string; email_verified?: boolean }) =>
+        request<AdminUser>(`/api/admin/users/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        }),
+
+    deleteUser: (id: string) => request<void>(`/api/admin/users/${id}`, { method: 'DELETE' }),
+
+    // Networks
+    listNetworks: (params?: { offset?: number; limit?: number; search?: string }) => {
+        const searchParams = new URLSearchParams();
+        if (params?.offset) searchParams.set('offset', String(params.offset));
+        if (params?.limit) searchParams.set('limit', String(params.limit));
+        if (params?.search) searchParams.set('search', params.search);
+        const query = searchParams.toString();
+        return request<{ networks: AdminNetwork[]; total: number; offset: number; limit: number }>(
+            `/api/admin/networks${query ? `?${query}` : ''}`
+        );
+    },
+
+    // Stats
+    getStats: () => request<SystemStats>('/api/admin/stats'),
+
+    // Audit Log
+    listAuditLog: (params?: { offset?: number; limit?: number; event_type?: string; user_id?: string }) => {
+        const searchParams = new URLSearchParams();
+        if (params?.offset) searchParams.set('offset', String(params.offset));
+        if (params?.limit) searchParams.set('limit', String(params.limit));
+        if (params?.event_type) searchParams.set('event_type', params.event_type);
+        if (params?.user_id) searchParams.set('user_id', params.user_id);
+        const query = searchParams.toString();
+        return request<{ entries: AuditLogEntry[]; total: number; offset: number; limit: number }>(
+            `/api/admin/audit-log${query ? `?${query}` : ''}`
+        );
+    },
+};
+
 export { ApiError };
 
 // Helper to extract error message from unknown catch value

@@ -33,6 +33,9 @@ async function handleLogout() {
             {#if $isAuthenticated}
                 <a href="/">Dashboard</a>
                 <a href="/networks">Networks</a>
+                {#if $auth.user?.role === 'admin'}
+                    <a href="/admin" class="admin-link">Admin</a>
+                {/if}
                 <a href="/settings">Settings</a>
                 <button class="logout-btn" on:click={handleLogout}>Logout</button>
             {:else}
@@ -57,6 +60,8 @@ async function handleLogout() {
     nav { display: flex; gap: 2rem; align-items: center; }
     nav a { color: #a0a0a0; text-decoration: none; }
     nav a:hover { color: #fff; }
+    nav a.admin-link { color: #7c3aed; }
+    nav a.admin-link:hover { color: #a78bfa; }
     main { flex: 1; padding: 2rem; background: #0f0f1a; }
     .logout-btn {
         background: none;

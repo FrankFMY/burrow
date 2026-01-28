@@ -30,6 +30,8 @@ pub enum AuditEventType {
 
     // Admin events
     UserRoleChanged,
+    UserUpdated,
+    UserDeleted,
     SettingsChanged,
 }
 

@@ -2,6 +2,7 @@
 //!
 //! This module exposes the server components for testing
 
+pub mod admin_handlers;
 pub mod audit;
 pub mod auth;
 pub mod auth_handlers;
