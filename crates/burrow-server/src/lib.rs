@@ -7,6 +7,7 @@ pub mod audit;
 pub mod auth;
 pub mod auth_handlers;
 pub mod db;
+pub mod error_codes;
 pub mod jobs;
 pub mod metrics;
 pub mod derp;

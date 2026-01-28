@@ -25,6 +25,7 @@ mod auth_handlers;
 mod db;
 mod derp;
 mod email;
+mod error_codes;
 mod handlers;
 mod jobs;
 mod lockout;
