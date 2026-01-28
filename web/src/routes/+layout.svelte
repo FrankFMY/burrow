@@ -4,6 +4,7 @@ import { onMount } from 'svelte';
 import { goto } from '$app/navigation';
 import { authApi } from '$lib/api';
 import { auth, isAuthenticated } from '$lib/stores/auth';
+import ToastContainer from '$lib/components/ToastContainer.svelte';
 
 onMount(async () => {
     // If we have a token but no user, fetch user info
@@ -47,6 +48,8 @@ async function handleLogout() {
     <main><slot /></main>
 </div>
 
+<ToastContainer />
+
 <style>
     .app { min-height: 100vh; display: flex; flex-direction: column; }
     header {
@@ -75,5 +78,44 @@ async function handleLogout() {
     .logout-btn:hover {
         border-color: #7c3aed;
         color: #fff;
+    }
+
+    /* Mobile responsive */
+    @media (max-width: 768px) {
+        header {
+            padding: 0.75rem 1rem;
+            flex-wrap: wrap;
+        }
+
+        .logo {
+            font-size: 1.25rem;
+        }
+
+        nav {
+            gap: 1rem;
+            font-size: 0.875rem;
+        }
+
+        main {
+            padding: 1rem;
+        }
+    }
+
+    @media (max-width: 480px) {
+        header {
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        nav {
+            width: 100%;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .logout-btn {
+            padding: 0.375rem 0.75rem;
+            font-size: 0.75rem;
+        }
     }
 </style>
