@@ -20,8 +20,8 @@ onMount(async () => {
     }
 });
 
-function handleLogout() {
-    auth.logout();
+async function handleLogout() {
+    await auth.logoutAsync(); // Clears httpOnly cookie and localStorage
     goto('/login');
 }
 </script>

@@ -18,7 +18,10 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "set-header"] }
+tower-cookies = "0.10"
+axum-extra = { version = "0.10", features = ["cookie"] }
+time = "0.3"
 rand = { workspace = true }
 rand_chacha = "0.3"
 futures-util = "0.3"

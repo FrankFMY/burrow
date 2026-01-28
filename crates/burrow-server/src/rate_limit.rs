@@ -19,8 +19,10 @@ use crate::state::AppState;
 
 /// Rate limiter configuration
 const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
-const MAX_REQUESTS_PER_WINDOW: u32 = 60; // 60 requests per minute
-const AUTH_MAX_REQUESTS: u32 = 10; // 10 auth attempts per minute
+const MAX_REQUESTS_PER_WINDOW: u32 = 120; // 120 requests per minute
+const AUTH_MAX_REQUESTS: u32 = 30; // 30 auth attempts per minute (higher for dev)
+const REGISTRATION_MAX_REQUESTS: u32 = 10; // 10 node registrations per minute per IP
+const HEARTBEAT_MAX_REQUESTS: u32 = 120; // 120 heartbeats per minute (2 per second is reasonable)
 const MAX_BUCKETS: usize = 100_000; // Maximum tracked IPs to prevent memory exhaustion
 
 /// Rate limit state stored in app state
@@ -95,6 +97,10 @@ pub async fn rate_limit_middleware(
     let path = request.uri().path();
     let limit = if path.contains("/auth/") {
         AUTH_MAX_REQUESTS
+    } else if path == "/api/register" {
+        REGISTRATION_MAX_REQUESTS
+    } else if path.contains("/heartbeat") {
+        HEARTBEAT_MAX_REQUESTS
     } else {
         MAX_REQUESTS_PER_WINDOW
     };

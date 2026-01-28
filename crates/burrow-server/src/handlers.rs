@@ -19,18 +19,70 @@ use crate::ws::{emit_network_deleted, emit_node_joined, emit_node_status};
 
 type AppResult<T> = Result<T, AppError>;
 
+/// Sanitize user input for safe logging (prevents log injection attacks)
+fn sanitize_for_log(input: &str) -> String {
+    input
+        .chars()
+        .take(100) // Limit length
+        .map(|c| if c.is_control() || c == '\n' || c == '\r' { '_' } else { c })
+        .collect()
+}
+
 // Error handling
-pub struct AppError(anyhow::Error);
+pub enum AppError {
+    Internal(anyhow::Error),
+    BadRequest(String),
+    Forbidden(String),
+    NotFound(String),
+}
+
+impl AppError {
+    pub fn bad_request(msg: impl Into<String>) -> Self {
+        Self::BadRequest(msg.into())
+    }
+
+    pub fn forbidden(msg: impl Into<String>) -> Self {
+        Self::Forbidden(msg.into())
+    }
+
+    pub fn not_found(msg: impl Into<String>) -> Self {
+        Self::NotFound(msg.into())
+    }
+}
 
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
-        // Log detailed error internally, return generic message to client
-        tracing::error!("Internal error: {}", self.0);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": "An internal error occurred" })),
-        )
-            .into_response()
+        match self {
+            AppError::Internal(err) => {
+                tracing::error!("Internal error: {}", err);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": "An internal error occurred" })),
+                )
+                    .into_response()
+            }
+            AppError::BadRequest(msg) => {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": msg })),
+                )
+                    .into_response()
+            }
+            AppError::Forbidden(msg) => {
+                (
+                    StatusCode::FORBIDDEN,
+                    Json(serde_json::json!({ "error": msg })),
+                )
+                    .into_response()
+            }
+            AppError::NotFound(msg) => {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({ "error": msg })),
+                )
+                    .into_response()
+            }
+        }
     }
 }
 
@@ -39,7 +91,7 @@ where
     E: Into<anyhow::Error>,
 {
     fn from(err: E) -> Self {
-        Self(err.into())
+        Self::Internal(err.into())
     }
 }
 
@@ -59,20 +111,48 @@ pub async fn create_network(
     // Validate network name
     let name = req.name.trim();
     if name.is_empty() || name.len() > 100 {
-        return Err(anyhow::anyhow!("Network name must be between 1 and 100 characters").into());
+        return Err(AppError::bad_request("Network name must be between 1 and 100 characters"));
     }
 
-    // Validate CIDR if provided
-    if let Some(ref cidr) = req.cidr {
-        if !is_valid_cidr(cidr) {
-            return Err(anyhow::anyhow!("Invalid CIDR format. Expected: x.x.x.x/y").into());
-        }
+    // Check if network name already exists for this user
+    let existing: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM networks WHERE owner_id = ? AND name = ?"
+    )
+    .bind(&claims.sub)
+    .bind(name)
+    .fetch_optional(&state.db)
+    .await?;
+
+    if existing.is_some() {
+        return Err(AppError::bad_request("Network with this name already exists"));
     }
+
+    // Validate CIDR if provided, or generate unique one
+    let cidr = if let Some(ref provided_cidr) = req.cidr {
+        if !is_valid_cidr(provided_cidr) {
+            return Err(AppError::bad_request("Invalid CIDR format. Expected: x.x.x.x/y"));
+        }
+        // Check if CIDR is already in use
+        let cidr_exists: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM networks WHERE cidr = ?"
+        )
+        .bind(provided_cidr)
+        .fetch_optional(&state.db)
+        .await?;
+
+        if cidr_exists.is_some() {
+            return Err(AppError::bad_request("This CIDR is already in use by another network"));
+        }
+        provided_cidr.clone()
+    } else {
+        // Generate unique CIDR
+        generate_unique_cidr(&state.db).await?
+    };
 
     let network = Network {
         id: Uuid::new_v4(),
-        name: req.name,
-        cidr: req.cidr.unwrap_or_else(|| "10.100.0.0/16".to_string()),
+        name: name.to_string(),
+        cidr,
         created_at: Utc::now(),
     };
 
@@ -98,9 +178,9 @@ pub async fn create_network(
 
     tracing::info!(
         "Created network: {} ({}) by {}",
-        network.name,
+        sanitize_for_log(&network.name),
         network.id,
-        claims.email
+        sanitize_for_log(&claims.email)
     );
     Ok(Json(network))
 }
@@ -146,16 +226,18 @@ pub async fn delete_network(
     Path(id): Path<String>,
 ) -> AppResult<StatusCode> {
     // Check ownership (admins can delete any)
-    if claims.role != "admin" {
-        let owner: Option<String> =
-            sqlx::query_scalar("SELECT owner_id FROM networks WHERE id = ?")
-                .bind(&id)
-                .fetch_optional(&state.db)
-                .await?;
+    let owner: Option<String> =
+        sqlx::query_scalar("SELECT owner_id FROM networks WHERE id = ?")
+            .bind(&id)
+            .fetch_optional(&state.db)
+            .await?;
 
-        if owner.as_ref() != Some(&claims.sub) {
-            return Err(anyhow::anyhow!("Not authorized to delete this network").into());
-        }
+    if owner.is_none() {
+        return Err(AppError::not_found("Network not found"));
+    }
+
+    if claims.role != "admin" && owner.as_ref() != Some(&claims.sub) {
+        return Err(AppError::forbidden("Not authorized to delete this network"));
     }
 
     // Delete related data first
@@ -176,7 +258,7 @@ pub async fn delete_network(
         .await?;
 
     if result.rows_affected() == 0 {
-        return Err(anyhow::anyhow!("Network not found").into());
+        return Err(AppError::bad_request("Network not found"));
     }
 
     // Audit log
@@ -202,24 +284,21 @@ pub async fn get_network(
     Path(id): Path<String>,
 ) -> AppResult<Json<Network>> {
     // Verify ownership (admins can view any)
-    if claims.role != "admin" {
-        let owner: Option<String> =
-            sqlx::query_scalar("SELECT owner_id FROM networks WHERE id = ?")
-                .bind(&id)
-                .fetch_optional(&state.db)
-                .await?;
-
-        if owner.as_ref() != Some(&claims.sub) {
-            return Err(anyhow::anyhow!("Not authorized to view this network").into());
-        }
-    }
-
-    let row = sqlx::query_as::<_, (String, String, String, String)>(
-        "SELECT id, name, cidr, created_at FROM networks WHERE id = ?"
+    let row = sqlx::query_as::<_, (String, String, String, String, String)>(
+        "SELECT id, name, cidr, created_at, owner_id FROM networks WHERE id = ?"
     )
     .bind(&id)
-    .fetch_one(&state.db)
+    .fetch_optional(&state.db)
     .await?;
+
+    let row = match row {
+        Some(r) => r,
+        None => return Err(AppError::not_found("Network not found")),
+    };
+
+    if claims.role != "admin" && row.4 != claims.sub {
+        return Err(AppError::forbidden("Not authorized to view this network"));
+    }
 
     let network = Network {
         id: row.0.parse()?,
@@ -239,16 +318,18 @@ pub async fn list_nodes(
     Path(network_id): Path<String>,
 ) -> AppResult<Json<Vec<Node>>> {
     // Verify access to network (admins can view any)
-    if claims.role != "admin" {
-        let owner: Option<String> =
-            sqlx::query_scalar("SELECT owner_id FROM networks WHERE id = ?")
-                .bind(&network_id)
-                .fetch_optional(&state.db)
-                .await?;
+    let owner: Option<String> =
+        sqlx::query_scalar("SELECT owner_id FROM networks WHERE id = ?")
+            .bind(&network_id)
+            .fetch_optional(&state.db)
+            .await?;
 
-        if owner.as_ref() != Some(&claims.sub) {
-            return Err(anyhow::anyhow!("Not authorized to view nodes in this network").into());
-        }
+    if owner.is_none() {
+        return Err(AppError::not_found("Network not found"));
+    }
+
+    if claims.role != "admin" && owner.as_ref() != Some(&claims.sub) {
+        return Err(AppError::forbidden("Not authorized to view nodes in this network"));
     }
 
     let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, String, String, Option<String>)>(
@@ -296,16 +377,18 @@ pub async fn create_invite(
     Path(network_id): Path<String>,
 ) -> AppResult<Json<InviteResponse>> {
     // Verify ownership (admins can create invites for any network)
-    if claims.role != "admin" {
-        let owner: Option<String> =
-            sqlx::query_scalar("SELECT owner_id FROM networks WHERE id = ?")
-                .bind(&network_id)
-                .fetch_optional(&state.db)
-                .await?;
+    let owner: Option<String> =
+        sqlx::query_scalar("SELECT owner_id FROM networks WHERE id = ?")
+            .bind(&network_id)
+            .fetch_optional(&state.db)
+            .await?;
 
-        if owner.as_ref() != Some(&claims.sub) {
-            return Err(anyhow::anyhow!("Not authorized to create invites for this network").into());
-        }
+    if owner.is_none() {
+        return Err(AppError::not_found("Network not found"));
+    }
+
+    if claims.role != "admin" && owner.as_ref() != Some(&claims.sub) {
+        return Err(AppError::forbidden("Not authorized to create invites for this network"));
     }
 
     let code = generate_invite_code();
@@ -356,7 +439,7 @@ pub async fn register_node(
     // Validate node name
     let node_name = req.name.trim();
     if node_name.is_empty() || node_name.len() > 100 {
-        return Err(anyhow::anyhow!("Node name must be between 1 and 100 characters").into());
+        return Err(AppError::bad_request("Node name must be between 1 and 100 characters"));
     }
 
     // Validate public key (must be valid base64 and decode to exactly 32 bytes)
@@ -364,12 +447,12 @@ pub async fn register_node(
     let decoded_key = STANDARD.decode(&req.public_key)
         .map_err(|_| anyhow::anyhow!("Invalid base64 in public key"))?;
     if decoded_key.len() != 32 {
-        return Err(anyhow::anyhow!("Public key must decode to exactly 32 bytes").into());
+        return Err(AppError::bad_request("Public key must decode to exactly 32 bytes"));
     }
 
     // Validate invite code format (alphanumeric, 8 chars)
     if req.invite_code.len() != 8 || !req.invite_code.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return Err(anyhow::anyhow!("Invalid invite code format").into());
+        return Err(AppError::bad_request("Invalid invite code format"));
     }
 
     // Atomically claim invite slot to prevent race conditions (TOCTOU)
@@ -385,7 +468,7 @@ pub async fn register_node(
     .map_err(|_| anyhow::anyhow!("Database error"))?;
 
     if update_result.rows_affected() == 0 {
-        return Err(anyhow::anyhow!("Invalid, expired, or exhausted invite code").into());
+        return Err(AppError::bad_request("Invalid, expired, or exhausted invite code"));
     }
 
     // Now fetch the network_id (invite is already claimed)
@@ -478,7 +561,7 @@ pub async fn register_node(
         &mesh_ip,
     );
 
-    tracing::info!("Registered node: {} ({}) in network {}", node.name, node.id, network_id);
+    tracing::info!("Registered node: {} ({}) in network {}", sanitize_for_log(&node.name), node.id, network_id);
 
     Ok(Json(RegisterNodeResponse {
         node,
@@ -503,12 +586,23 @@ pub async fn heartbeat(
     Json(req): Json<HeartbeatRequest>,
 ) -> AppResult<Json<Vec<Node>>> {
     // Verify node_secret
-    let (network_id, prev_status, stored_secret): (String, String, Option<String>) = sqlx::query_as(
+    // Use fetch_optional to handle "node not found" case without leaking information
+    let node_data: Option<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT network_id, status, node_secret FROM nodes WHERE id = ?"
     )
     .bind(&node_id)
-    .fetch_one(&state.db)
+    .fetch_optional(&state.db)
     .await?;
+
+    // Return same error for both "not found" and "invalid secret" to prevent enumeration
+    let (network_id, prev_status, stored_secret) = match node_data {
+        Some(data) => data,
+        None => {
+            // Add small delay to prevent timing-based node enumeration
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            return Err(AppError::forbidden("Invalid credentials"));
+        }
+    };
 
     // Verify secret using constant-time comparison to prevent timing attacks
     let valid_secret = stored_secret
@@ -517,7 +611,7 @@ pub async fn heartbeat(
         .unwrap_or(false);
 
     if !valid_secret {
-        return Err(anyhow::anyhow!("Invalid node secret").into());
+        return Err(AppError::forbidden("Invalid credentials"));
     }
 
     // Update last_seen
@@ -552,7 +646,26 @@ fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
     result == 0
 }
 
-/// Validate CIDR format (e.g., "10.100.0.0/16")
+/// Generate a unique CIDR for a new network
+async fn generate_unique_cidr(db: &sqlx::SqlitePool) -> anyhow::Result<String> {
+    // Use 10.x.0.0/16 ranges (x from 100 to 254)
+    // This gives us 155 possible networks
+    let used_cidrs: Vec<String> = sqlx::query_scalar("SELECT cidr FROM networks")
+        .fetch_all(db)
+        .await?;
+
+    for second_octet in 100..=254 {
+        let cidr = format!("10.{}.0.0/16", second_octet);
+        if !used_cidrs.contains(&cidr) {
+            return Ok(cidr);
+        }
+    }
+
+    anyhow::bail!("No available CIDR ranges. Maximum number of networks reached.")
+}
+
+/// Validate CIDR format and ensure it's a private IP range
+/// Allowed private ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
 fn is_valid_cidr(cidr: &str) -> bool {
     let parts: Vec<&str> = cidr.split('/').collect();
     if parts.len() != 2 {
@@ -565,18 +678,35 @@ fn is_valid_cidr(cidr: &str) -> bool {
         return false;
     }
 
-    for part in &ip_parts {
-        match part.parse::<u8>() {
-            Ok(_) => continue,
-            Err(_) => return false,
-        }
-    }
+    let octets: Vec<u8> = match ip_parts.iter().map(|p| p.parse::<u8>()).collect() {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
 
     // Validate prefix length
-    match parts[1].parse::<u8>() {
-        Ok(prefix) => prefix <= 32,
-        Err(_) => false,
+    let prefix: u8 = match parts[1].parse() {
+        Ok(p) if p <= 32 => p,
+        _ => return false,
+    };
+
+    // Ensure it's a private IP range (RFC 1918)
+    let is_private = match octets[0] {
+        10 => true,                                       // 10.0.0.0/8
+        172 if (16..=31).contains(&octets[1]) => true,   // 172.16.0.0/12
+        192 if octets[1] == 168 => true,                 // 192.168.0.0/16
+        _ => false,
+    };
+
+    if !is_private {
+        return false;
     }
+
+    // Ensure prefix allows at least a /30 (4 addresses, 2 usable)
+    if prefix > 30 {
+        return false;
+    }
+
+    true
 }
 
 fn generate_invite_code() -> String {

@@ -18,8 +18,18 @@ async function handleSubmit() {
         return;
     }
 
+    // Password strength validation
     if (password.length < 8) {
         error = 'Password must be at least 8 characters';
+        return;
+    }
+    if (password.length > 72) {
+        error = 'Password must be at most 72 characters';
+        return;
+    }
+    // Check for at least one number and one letter
+    if (!/\d/.test(password) || !/[a-zA-Z]/.test(password)) {
+        error = 'Password must contain at least one letter and one number';
         return;
     }
 

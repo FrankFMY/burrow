@@ -2,10 +2,11 @@
 
 use axum::{
     extract::{Extension, State},
-    http::StatusCode,
+    http::{header, StatusCode},
     response::IntoResponse,
     Json,
 };
+use axum_extra::extract::cookie::{Cookie, SameSite};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -14,6 +15,33 @@ use uuid::Uuid;
 use crate::audit::{log_event, AuditEvent, AuditEventType};
 use crate::auth::{self, Claims};
 use crate::state::AppState;
+
+/// Cookie name for JWT token
+pub const AUTH_COOKIE_NAME: &str = "burrow_auth";
+/// Cookie max age in seconds (24 hours)
+const COOKIE_MAX_AGE_SECS: i64 = 24 * 60 * 60;
+
+/// Create an httpOnly secure cookie for authentication
+fn create_auth_cookie(token: &str) -> Cookie<'static> {
+    Cookie::build((AUTH_COOKIE_NAME.to_string(), token.to_string()))
+        .http_only(true)
+        .secure(std::env::var("INSECURE_COOKIES").is_err()) // Only send over HTTPS in production
+        .same_site(SameSite::Strict)
+        .path("/")
+        .max_age(time::Duration::seconds(COOKIE_MAX_AGE_SECS))
+        .build()
+}
+
+/// Create a cookie that clears the auth cookie
+fn clear_auth_cookie() -> Cookie<'static> {
+    Cookie::build((AUTH_COOKIE_NAME.to_string(), String::new()))
+        .http_only(true)
+        .secure(std::env::var("INSECURE_COOKIES").is_err())
+        .same_site(SameSite::Strict)
+        .path("/")
+        .max_age(time::Duration::seconds(0))
+        .build()
+}
 
 // === Validation helpers ===
 
@@ -118,7 +146,7 @@ impl IntoResponse for AuthHandlerError {
 pub async fn register(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RegisterRequest>,
-) -> Result<Json<AuthResponse>, AuthHandlerError> {
+) -> Result<impl IntoResponse, AuthHandlerError> {
     // Validate email format
     if !is_valid_email(&req.email) {
         return Err(AuthHandlerError(
@@ -151,11 +179,21 @@ pub async fn register(
         ));
     }
 
-    // Validate password
-    if req.password.len() < 8 {
+    // Validate password (bcrypt has max 72 bytes limit)
+    if req.password.len() < 8 || req.password.len() > 72 {
         return Err(AuthHandlerError(
             StatusCode::BAD_REQUEST,
-            "Password must be at least 8 characters".to_string(),
+            "Password must be between 8 and 72 characters".to_string(),
+        ));
+    }
+
+    // Password complexity: require at least one letter and one digit
+    let has_letter = req.password.chars().any(|c| c.is_alphabetic());
+    let has_digit = req.password.chars().any(|c| c.is_ascii_digit());
+    if !has_letter || !has_digit {
+        return Err(AuthHandlerError(
+            StatusCode::BAD_REQUEST,
+            "Password must contain at least one letter and one number".to_string(),
         ));
     }
 
@@ -210,22 +248,29 @@ pub async fn register(
 
     tracing::info!("User registered: {} ({})", req.email, user_id);
 
-    Ok(Json(AuthResponse {
-        token,
-        user: UserInfo {
-            id: user_id,
-            email: req.email,
-            name: req.name,
-            role,
-        },
-    }))
+    // Create httpOnly cookie for secure token storage
+    let cookie = create_auth_cookie(&token);
+    let cookie_header = [(header::SET_COOKIE, cookie.to_string())];
+
+    Ok((
+        cookie_header,
+        Json(AuthResponse {
+            token: token.clone(),
+            user: UserInfo {
+                id: user_id,
+                email: req.email,
+                name: req.name,
+                role,
+            },
+        }),
+    ))
 }
 
 /// Login user
 pub async fn login(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LoginRequest>,
-) -> Result<Json<AuthResponse>, AuthHandlerError> {
+) -> Result<impl IntoResponse, AuthHandlerError> {
     // Find user with 2FA status and backup codes
     let user = sqlx::query_as::<_, (String, String, String, String, String, Option<String>, i32, Option<String>)>(
         "SELECT id, email, password_hash, name, role, totp_secret, COALESCE(totp_enabled, 0), backup_codes FROM users WHERE email = ?"
@@ -276,9 +321,31 @@ pub async fn login(
             )
         })?;
 
-        // First try TOTP code
-        let valid_totp = crate::totp::verify_code(&secret, &totp_code, &email)
-            .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        // First try TOTP code with replay protection
+        let totp_result = crate::totp::verify_code_with_replay_protection(
+            &state.db, &user_id, &secret, &totp_code, &email
+        ).await;
+
+        let valid_totp = match totp_result {
+            Ok(valid) => valid,
+            Err(e) if e.contains("already used") => {
+                // Audit log - replay attack attempt
+                log_event(
+                    &state.db,
+                    AuditEvent::new(AuditEventType::UserLoginFailed)
+                        .with_user(&user_id, &req.email)
+                        .with_details(serde_json::json!({
+                            "reason": "totp_replay_attack"
+                        })),
+                )
+                .await;
+                return Err(AuthHandlerError(
+                    StatusCode::UNAUTHORIZED,
+                    "TOTP code already used. Please wait for a new code.".to_string(),
+                ));
+            }
+            Err(e) => return Err(AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e)),
+        };
 
         if !valid_totp {
             // Try backup code with atomic update to prevent race conditions
@@ -326,15 +393,22 @@ pub async fn login(
 
     tracing::info!("User logged in: {}", req.email);
 
-    Ok(Json(AuthResponse {
-        token,
-        user: UserInfo {
-            id: user_id,
-            email,
-            name,
-            role,
-        },
-    }))
+    // Create httpOnly cookie for secure token storage
+    let cookie = create_auth_cookie(&token);
+    let cookie_header = [(header::SET_COOKIE, cookie.to_string())];
+
+    Ok((
+        cookie_header,
+        Json(AuthResponse {
+            token: token.clone(),
+            user: UserInfo {
+                id: user_id,
+                email,
+                name,
+                role,
+            },
+        }),
+    ))
 }
 
 /// Get current user info
@@ -589,15 +663,26 @@ pub async fn verify_totp_setup(
         AuthHandlerError(StatusCode::BAD_REQUEST, "2FA not set up".to_string())
     })?;
 
-    // Verify code
-    let valid = totp::verify_code(&secret, &req.code, &claims.email)
-        .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    // Verify code with replay protection
+    let totp_result = totp::verify_code_with_replay_protection(
+        &state.db, &claims.sub, &secret, &req.code, &claims.email
+    ).await;
 
-    if !valid {
-        return Err(AuthHandlerError(
-            StatusCode::UNAUTHORIZED,
-            "Invalid verification code".to_string(),
-        ));
+    match totp_result {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(AuthHandlerError(
+                StatusCode::UNAUTHORIZED,
+                "Invalid verification code".to_string(),
+            ));
+        }
+        Err(e) if e.contains("already used") => {
+            return Err(AuthHandlerError(
+                StatusCode::UNAUTHORIZED,
+                "Code already used. Please wait for a new code.".to_string(),
+            ));
+        }
+        Err(e) => return Err(AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e)),
     }
 
     // Enable 2FA
@@ -649,9 +734,21 @@ pub async fn disable_totp(
         AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, "2FA secret not found".to_string())
     })?;
 
-    // Verify code before disabling
-    let valid = totp::verify_code(&secret, &req.code, &claims.email)
-        .map_err(|e| AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    // Verify code with replay protection before disabling
+    let totp_result = totp::verify_code_with_replay_protection(
+        &state.db, &claims.sub, &secret, &req.code, &claims.email
+    ).await;
+
+    let valid = match totp_result {
+        Ok(v) => v,
+        Err(e) if e.contains("already used") => {
+            return Err(AuthHandlerError(
+                StatusCode::UNAUTHORIZED,
+                "Code already used. Please wait for a new code.".to_string(),
+            ));
+        }
+        Err(e) => return Err(AuthHandlerError(StatusCode::INTERNAL_SERVER_ERROR, e)),
+    };
 
     if !valid {
         return Err(AuthHandlerError(
@@ -700,6 +797,29 @@ pub async fn totp_status(
         enabled: totp_enabled == 1,
         verified: totp_verified == 1,
     }))
+}
+
+/// Logout user - clears auth cookie
+pub async fn logout(
+    Extension(claims): Extension<Claims>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    // Audit log
+    log_event(
+        &state.db,
+        AuditEvent::new(AuditEventType::UserLogout)
+            .with_user(&claims.sub, &claims.email),
+    )
+    .await;
+
+    tracing::info!("User logged out: {}", claims.email);
+
+    // Clear the auth cookie
+    let cookie = clear_auth_cookie();
+    (
+        [(header::SET_COOKIE, cookie.to_string())],
+        StatusCode::NO_CONTENT,
+    )
 }
 
 /// Atomically try to use a backup code with race condition protection.

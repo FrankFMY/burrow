@@ -37,6 +37,7 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
     const response = await fetch(`${API_BASE}${endpoint}`, {
         ...fetchOptions,
         headers,
+        credentials: 'include', // Send cookies for httpOnly auth
     });
 
     if (!response.ok) {
@@ -74,6 +75,8 @@ export const authApi = {
         ),
 
     me: () => request<{ id: string; email: string; name: string; role: string }>('/api/auth/me'),
+
+    logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
 
     listApiKeys: () =>
         request<{ id: string; name: string; created_at: string; last_used?: string }[]>(

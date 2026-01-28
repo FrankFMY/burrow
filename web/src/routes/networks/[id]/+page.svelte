@@ -1,7 +1,9 @@
 <script lang="ts">
 import { onDestroy, onMount } from 'svelte';
+import { goto } from '$app/navigation';
 import { page } from '$app/stores';
 import { getErrorMessage, networksApi } from '$lib/api';
+import { isAuthenticated } from '$lib/stores/auth';
 import { isWsConnected, websocket } from '$lib/stores/websocket';
 
 interface Network {
@@ -68,6 +70,11 @@ $: if ($websocket.lastEvent) {
 }
 
 onMount(async () => {
+    // Auth guard - redirect to login if not authenticated
+    if (!$isAuthenticated) {
+        goto('/login');
+        return;
+    }
     if (!networkId) {
         error = 'Network ID not found';
         loading = false;

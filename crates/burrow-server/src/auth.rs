@@ -7,11 +7,13 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use axum_extra::extract::cookie::CookieJar;
 use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::auth_handlers::AUTH_COOKIE_NAME;
 use crate::state::AppState;
 
 /// JWT Claims
@@ -71,9 +73,10 @@ pub fn verify_token(token: &str, secret: &str) -> Result<Claims, jsonwebtoken::e
     Ok(token_data.claims)
 }
 
-/// Auth middleware - validates JWT or API key
+/// Auth middleware - validates JWT (from header or cookie) or API key
 pub async fn auth_middleware(
     State(state): State<Arc<AppState>>,
+    jar: CookieJar,
     mut request: Request,
     next: Next,
 ) -> Result<Response, AuthError> {
@@ -82,6 +85,7 @@ pub async fn auth_middleware(
         .get(header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok());
 
+    // Try to get token from Authorization header first, then fall back to cookie
     let claims = match auth_header {
         Some(header) if header.starts_with("Bearer ") => {
             let token = &header[7..];
@@ -96,9 +100,16 @@ pub async fn auth_middleware(
             })?
         }
         _ => {
-            return Err(AuthError {
-                error: "Missing authorization header".to_string(),
-            });
+            // No valid Authorization header, try cookie
+            if let Some(cookie) = jar.get(AUTH_COOKIE_NAME) {
+                verify_token(cookie.value(), &state.jwt_secret).map_err(|_| AuthError {
+                    error: "Invalid token in cookie".to_string(),
+                })?
+            } else {
+                return Err(AuthError {
+                    error: "Missing authorization".to_string(),
+                });
+            }
         }
     };
 

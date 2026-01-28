@@ -12,6 +12,7 @@ pub enum AuditEventType {
     // Auth events
     UserRegistered,
     UserLogin,
+    UserLogout,
     UserLoginFailed,
     ApiKeyCreated,
     ApiKeyRevoked,

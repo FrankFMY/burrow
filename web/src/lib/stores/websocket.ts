@@ -39,12 +39,18 @@ function createWebSocketStore() {
     let ws: WebSocket | null = null;
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
     let pingInterval: ReturnType<typeof setInterval> | null = null;
+    let intentionalDisconnect = false; // Flag to prevent reconnection on intentional disconnect
+    let currentNetworkId: string | undefined = undefined; // Track current network for reconnection
 
     function connect(networkId?: string) {
         if (!browser) return;
-        if (ws?.readyState === WebSocket.OPEN) return;
+        // Check both OPEN and CONNECTING states to prevent duplicate connections
+        if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
 
-        // Get authentication token
+        intentionalDisconnect = false;
+        currentNetworkId = networkId;
+
+        // Check if user is authenticated (token exists in store means logged in)
         const { token } = get(auth);
         if (!token) {
             console.warn('WebSocket connection requires authentication');
@@ -56,13 +62,14 @@ function createWebSocketStore() {
             ? new URL(import.meta.env.VITE_API_URL).host
             : globalThis.location.host;
 
-        // Build URL with token and optional network_id
+        // Build URL with only network_id filter (auth via httpOnly cookie or initial message)
+        // Token is NOT passed in URL to avoid logging/exposure
         const params = new URLSearchParams();
-        params.set('token', token);
         if (networkId) {
             params.set('network_id', networkId);
         }
-        const url = `${protocol}//${host}/ws?${params.toString()}`;
+        const baseUrl = `${protocol}//${host}/ws`;
+        const url = params.toString() ? `${baseUrl}?${params.toString()}` : baseUrl;
 
         ws = new WebSocket(url);
 
@@ -96,8 +103,10 @@ function createWebSocketStore() {
             update((s) => ({ ...s, connected: false }));
             cleanup();
 
-            // Reconnect after 5 seconds
-            reconnectTimeout = setTimeout(() => connect(networkId), 5000);
+            // Only reconnect if disconnect was not intentional
+            if (!intentionalDisconnect) {
+                reconnectTimeout = setTimeout(() => connect(currentNetworkId), 5000);
+            }
         };
 
         ws.onerror = (error) => {
@@ -106,11 +115,13 @@ function createWebSocketStore() {
     }
 
     function disconnect() {
+        intentionalDisconnect = true; // Prevent reconnection in onclose handler
         cleanup();
         if (ws) {
             ws.close();
             ws = null;
         }
+        currentNetworkId = undefined;
         set({ connected: false, events: [], lastEvent: null });
     }
 

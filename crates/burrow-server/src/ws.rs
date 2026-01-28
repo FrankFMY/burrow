@@ -107,37 +107,83 @@ impl Default for WsState {
     }
 }
 
-use crate::auth;
+use axum_extra::extract::cookie::CookieJar;
+use crate::auth::{self, Claims};
+use crate::auth_handlers::AUTH_COOKIE_NAME;
 use crate::state::AppState;
 
 /// WebSocket handler with required authentication
+/// Supports authentication via:
+/// 1. httpOnly cookie (preferred - most secure)
+/// 2. Query parameter token (fallback for backwards compatibility)
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(query): Query<WsQuery>,
+    jar: CookieJar,
     State(app_state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    // Authentication is always required for WebSocket connections
-    let authenticated = if let Some(ref token) = query.token {
-        auth::verify_token(token, &app_state.jwt_secret).is_ok()
+    // Try to get claims from cookie first (most secure), then fallback to query param
+    let claims = if let Some(cookie) = jar.get(AUTH_COOKIE_NAME) {
+        // Authenticate via httpOnly cookie (preferred)
+        auth::verify_token(cookie.value(), &app_state.jwt_secret).ok()
+    } else if let Some(ref token) = query.token {
+        // Fallback to query param (for backwards compatibility)
+        // Note: Query param auth is less secure as token appears in logs
+        tracing::warn!("WebSocket using query param auth - consider using cookies");
+        auth::verify_token(token, &app_state.jwt_secret).ok()
     } else {
-        false
+        None
     };
 
     // Require authentication for all WebSocket connections
-    if !authenticated {
-        return (
-            StatusCode::UNAUTHORIZED,
-            "Authentication required for WebSocket connection",
-        )
-            .into_response();
+    let claims = match claims {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                "Authentication required for WebSocket connection",
+            )
+                .into_response();
+        }
+    };
+
+    // If a network_id filter is specified, verify user has access to it
+    if let Some(ref network_id) = query.network_id {
+        let has_access = verify_network_access(&app_state.db, &claims, network_id).await;
+        if !has_access {
+            return (
+                StatusCode::FORBIDDEN,
+                "Not authorized to access this network",
+            )
+                .into_response();
+        }
     }
 
     let ws_state = app_state.ws.clone();
-    ws.on_upgrade(move |socket| handle_socket(socket, query, ws_state, authenticated))
+    ws.on_upgrade(move |socket| handle_socket(socket, query, ws_state))
         .into_response()
 }
 
-async fn handle_socket(socket: WebSocket, query: WsQuery, state: Arc<WsState>, _authenticated: bool) {
+/// Verify user has access to a network
+async fn verify_network_access(db: &sqlx::SqlitePool, claims: &Claims, network_id: &str) -> bool {
+    // Admins have access to all networks
+    if claims.role == "admin" {
+        return true;
+    }
+
+    // Check if user owns the network
+    let owner: Option<String> = sqlx::query_scalar(
+        "SELECT owner_id FROM networks WHERE id = ?"
+    )
+    .bind(network_id)
+    .fetch_optional(db)
+    .await
+    .unwrap_or(None);
+
+    owner.as_ref() == Some(&claims.sub)
+}
+
+async fn handle_socket(socket: WebSocket, query: WsQuery, state: Arc<WsState>) {
     let (mut sender, mut receiver) = socket.split();
 
     // Subscribe to broadcast channel

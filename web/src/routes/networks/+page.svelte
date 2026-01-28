@@ -1,16 +1,37 @@
 <script lang="ts">
 import { onMount } from 'svelte';
+import { goto } from '$app/navigation';
 import { getErrorMessage, networksApi } from '$lib/api';
+import { isAuthenticated } from '$lib/stores/auth';
 
 let networks: { id: string; name: string; cidr: string; created_at: string }[] = [];
 let loading = true;
 let showCreate = false;
 let newName = '';
 let error = '';
+let creating = false;
+let formError = '';
 
 onMount(async () => {
+    // Auth guard - redirect to login if not authenticated
+    if (!$isAuthenticated) {
+        goto('/login');
+        return;
+    }
     await loadNetworks();
 });
+
+function openCreateModal() {
+    newName = '';
+    formError = '';
+    showCreate = true;
+}
+
+function closeCreateModal() {
+    showCreate = false;
+    newName = '';
+    formError = '';
+}
 
 async function loadNetworks() {
     loading = true;
@@ -23,15 +44,17 @@ async function loadNetworks() {
 }
 
 async function createNetwork() {
-    if (!newName.trim()) return;
-    error = '';
+    if (!newName.trim() || creating) return;
+    formError = '';
+    creating = true;
     try {
         await networksApi.create({ name: newName });
-        newName = '';
-        showCreate = false;
+        closeCreateModal();
         await loadNetworks();
     } catch (e: unknown) {
-        error = getErrorMessage(e);
+        formError = getErrorMessage(e);
+    } finally {
+        creating = false;
     }
 }
 </script>
@@ -41,21 +64,24 @@ async function createNetwork() {
 <div class="page">
     <div class="header">
         <h1>Networks</h1>
-        <button on:click={() => showCreate = true}>+ Create Network</button>
+        <button on:click={openCreateModal}>+ Create Network</button>
     </div>
 
     {#if showCreate}
         <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-        <div class="modal-bg" role="presentation" on:click={() => showCreate = false} on:keydown={(e) => e.key === 'Escape' && (showCreate = false)}>
+        <div class="modal-bg" role="presentation" on:click={closeCreateModal} on:keydown={(e) => e.key === 'Escape' && closeCreateModal()}>
             <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
             <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>
                 <h2 id="modal-title">Create Network</h2>
+                {#if formError}
+                    <p class="form-error">{formError}</p>
+                {/if}
                 <form on:submit|preventDefault={createNetwork}>
                     <!-- svelte-ignore a11y_autofocus -->
                     <input type="text" bind:value={newName} placeholder="Network name" autofocus />
                     <div class="actions">
-                        <button type="button" class="secondary" on:click={() => showCreate = false}>Cancel</button>
-                        <button type="submit">Create</button>
+                        <button type="button" class="secondary" on:click={closeCreateModal}>Cancel</button>
+                        <button type="submit" disabled={creating}>{creating ? 'Creating...' : 'Create'}</button>
                     </div>
                 </form>
             </div>
@@ -67,7 +93,7 @@ async function createNetwork() {
     {:else if networks.length === 0}
         <div class="empty">
             <p>No networks yet</p>
-            <button on:click={() => showCreate = true}>Create your first network</button>
+            <button on:click={openCreateModal}>Create your first network</button>
         </div>
     {:else}
         <div class="list">
@@ -112,4 +138,5 @@ async function createNetwork() {
     .modal input { width: 100%; margin-bottom: 1rem; }
     .actions { display: flex; gap: 1rem; justify-content: flex-end; }
     .secondary { background: transparent; border: 1px solid #666; }
+    .form-error { color: #ef4444; margin-bottom: 1rem; padding: 0.5rem; background: rgba(239, 68, 68, 0.1); border-radius: 0.25rem; }
 </style>

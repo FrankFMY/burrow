@@ -16,6 +16,9 @@ interface AuthState {
 
 const TOKEN_KEY = 'burrow_token';
 
+// API base URL for logout endpoint
+const API_BASE = browser ? import.meta.env.VITE_API_URL || '' : '';
+
 function createAuthStore() {
     const initialToken = browser ? localStorage.getItem(TOKEN_KEY) : null;
 
@@ -24,6 +27,14 @@ function createAuthStore() {
         token: initialToken,
         loading: !!initialToken,
     });
+
+    // Clear local state (sync)
+    const clearLocalState = () => {
+        if (browser) {
+            localStorage.removeItem(TOKEN_KEY);
+        }
+        set({ user: null, token: null, loading: false });
+    };
 
     return {
         subscribe,
@@ -35,11 +46,23 @@ function createAuthStore() {
             set({ user, token, loading: false });
         },
 
-        logout: () => {
+        // Sync logout - clears local state only (used for 401 auto-logout)
+        logout: clearLocalState,
+
+        // Async logout - calls API to clear httpOnly cookie, then clears local state
+        logoutAsync: async () => {
             if (browser) {
-                localStorage.removeItem(TOKEN_KEY);
+                try {
+                    // Call API to clear the httpOnly cookie
+                    await fetch(`${API_BASE}/api/auth/logout`, {
+                        method: 'POST',
+                        credentials: 'include',
+                    });
+                } catch {
+                    // Ignore errors - we still want to clear local state
+                }
             }
-            set({ user: null, token: null, loading: false });
+            clearLocalState();
         },
 
         setLoading: (loading: boolean) => {

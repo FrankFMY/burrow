@@ -4,7 +4,8 @@
 
 use anyhow::Result;
 use axum::{
-    http::{header, Method},
+    extract::State,
+    http::{header, Method, StatusCode},
     middleware,
     response::IntoResponse,
     routing::{delete, get, post},
@@ -13,6 +14,7 @@ use axum::{
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -56,15 +58,19 @@ async fn main() -> Result<()> {
     
     tracing::info!("✓ Database initialized");
 
-    // JWT secret
+    // JWT secret (use cryptographically secure RNG)
     let jwt_secret = std::env::var("JWT_SECRET")
         .unwrap_or_else(|_| {
             tracing::warn!("JWT_SECRET not set, using random secret (sessions will not persist across restarts)");
-            use rand::Rng;
-            rand::thread_rng()
-                .sample_iter(&rand::distributions::Alphanumeric)
-                .take(64)
-                .map(char::from)
+            use rand::{Rng, SeedableRng};
+            use rand_chacha::ChaCha20Rng;
+            let mut rng = ChaCha20Rng::from_entropy();
+            (0..64)
+                .map(|_| {
+                    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+                    let idx = rng.gen_range(0..CHARSET.len());
+                    CHARSET[idx] as char
+                })
                 .collect()
         });
 
@@ -85,6 +91,7 @@ async fn main() -> Result<()> {
     // Protected routes (require auth)
     let protected_routes = Router::new()
         .route("/api/auth/me", get(auth_handlers::me))
+        .route("/api/auth/logout", post(auth_handlers::logout))
         .route("/api/auth/api-keys", get(auth_handlers::list_api_keys))
         .route("/api/auth/api-keys", post(auth_handlers::create_api_key))
         .route("/api/auth/api-keys/{id}", delete(auth_handlers::revoke_api_key))
@@ -115,6 +122,7 @@ async fn main() -> Result<()> {
         CorsLayer::new()
             .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::OPTIONS])
             .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT])
+            .allow_credentials(true) // Allow httpOnly cookies to be sent
             .allow_origin(
                 allowed_origins
                     .split(',')
@@ -142,7 +150,16 @@ async fn main() -> Result<()> {
         ))
         // Middleware
         .layer(TraceLayer::new_for_http())
-        .layer(cors);
+        .layer(cors)
+        // Security headers
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_CONTENT_TYPE_OPTIONS,
+            header::HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_FRAME_OPTIONS,
+            header::HeaderValue::from_static("DENY"),
+        ));
 
     // Start background cleanup task for rate limiter
     tokio::spawn(async {
@@ -165,10 +182,23 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn health() -> impl IntoResponse {
-    Json(serde_json::json!({
-        "status": "ok",
-        "service": "burrow-server",
-        "version": env!("CARGO_PKG_VERSION")
-    }))
+async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    // Check database connectivity
+    let db_ok = sqlx::query("SELECT 1")
+        .fetch_one(&state.db)
+        .await
+        .is_ok();
+
+    let status = if db_ok { "ok" } else { "degraded" };
+    let status_code = if db_ok { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
+
+    (
+        status_code,
+        Json(serde_json::json!({
+            "status": status,
+            "service": "burrow-server",
+            "version": env!("CARGO_PKG_VERSION"),
+            "database": if db_ok { "connected" } else { "disconnected" }
+        })),
+    )
 }

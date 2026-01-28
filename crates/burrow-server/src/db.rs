@@ -84,6 +84,16 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
         CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_log(event_type);
         CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+
+        -- TOTP replay protection: store used codes
+        CREATE TABLE IF NOT EXISTS totp_used_codes (
+            user_id TEXT NOT NULL,
+            code TEXT NOT NULL,
+            used_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, code),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_totp_used_codes_user ON totp_used_codes(user_id);
         "#,
     )
     .execute(pool)
@@ -132,6 +142,12 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             .await
             .ok();
     }
+
+    // Create index on node_secret (after column is guaranteed to exist)
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_nodes_node_secret ON nodes(node_secret)")
+        .execute(pool)
+        .await
+        .ok();
 
     Ok(())
 }

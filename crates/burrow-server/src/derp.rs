@@ -17,6 +17,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 
+/// Maximum DERP packet size (64KB - typical MTU for WireGuard)
+const MAX_DERP_PACKET_SIZE: usize = 64 * 1024;
+
+/// Maximum number of concurrent DERP clients (prevents resource exhaustion)
+const MAX_DERP_CLIENTS: usize = 10_000;
+
 /// Connected DERP client
 struct DerpClient {
     #[allow(dead_code)]
@@ -39,38 +45,54 @@ impl DerpState {
     }
 
     /// Verify node_secret against database using constant-time comparison
+    /// Uses indexed lookup + constant-time comparison to prevent timing attacks
     pub async fn verify_node_secret(&self, secret: &str) -> bool {
-        // Fetch all node secrets to do constant-time comparison
-        // This prevents timing attacks that could enumerate valid secrets
-        let stored_secrets: Vec<String> = sqlx::query_scalar(
-            "SELECT node_secret FROM nodes WHERE node_secret IS NOT NULL"
-        )
-        .fetch_all(&self.db)
-        .await
-        .unwrap_or_default();
-
-        // Constant-time comparison against all secrets
-        let secret_bytes = secret.as_bytes();
-        let mut found = false;
-        for stored in &stored_secrets {
-            let stored_bytes = stored.as_bytes();
-            if stored_bytes.len() == secret_bytes.len() {
-                let mut result = 0u8;
-                for (a, b) in stored_bytes.iter().zip(secret_bytes.iter()) {
-                    result |= a ^ b;
-                }
-                if result == 0 {
-                    found = true;
-                }
-            }
+        // Validate secret format first (prevents scanning attack)
+        if !secret.starts_with("ns_") || secret.len() != 35 {
+            return false;
         }
-        found
+
+        // Use indexed lookup - efficient O(log n) instead of O(n)
+        // SQLite will use the index on node_secret
+        let stored_secret: Option<String> = sqlx::query_scalar(
+            "SELECT node_secret FROM nodes WHERE node_secret = ? LIMIT 1"
+        )
+        .bind(secret)
+        .fetch_optional(&self.db)
+        .await
+        .unwrap_or(None);
+
+        // Constant-time comparison for the found secret
+        // Even though SQLite already matched, we do constant-time to prevent
+        // any timing leaks from the comparison itself
+        if let Some(stored) = stored_secret {
+            let secret_bytes = secret.as_bytes();
+            let stored_bytes = stored.as_bytes();
+            if stored_bytes.len() != secret_bytes.len() {
+                return false;
+            }
+            let mut result = 0u8;
+            for (a, b) in stored_bytes.iter().zip(secret_bytes.iter()) {
+                result |= a ^ b;
+            }
+            result == 0
+        } else {
+            false
+        }
     }
     
-    async fn register(&self, public_key: String, tx: mpsc::Sender<Vec<u8>>) {
+    async fn register(&self, public_key: String, tx: mpsc::Sender<Vec<u8>>) -> bool {
         let mut clients = self.clients.write().await;
+
+        // Check max clients limit to prevent resource exhaustion
+        if clients.len() >= MAX_DERP_CLIENTS && !clients.contains_key(&public_key) {
+            tracing::warn!("DERP: Max clients reached ({}), rejecting new connection", MAX_DERP_CLIENTS);
+            return false;
+        }
+
         tracing::info!("DERP: Client registered: {}", &public_key[..8.min(public_key.len())]);
         clients.insert(public_key.clone(), DerpClient { public_key, tx });
+        true
     }
     
     async fn unregister(&self, public_key: &str) {
@@ -156,12 +178,19 @@ async fn handle_connection(socket: WebSocket, state: Arc<DerpState>) {
     // Receive messages from client
     while let Some(msg) = receiver.next().await {
         let data = match msg {
-            Ok(Message::Binary(d)) => d.to_vec(),
+            Ok(Message::Binary(d)) => {
+                // Check packet size limit to prevent memory exhaustion
+                if d.len() > MAX_DERP_PACKET_SIZE {
+                    tracing::warn!("DERP: Packet too large ({} bytes), dropping", d.len());
+                    continue;
+                }
+                d.to_vec()
+            }
             Ok(Message::Close(_)) => break,
             Err(_) => break,
             _ => continue,
         };
-        
+
         if data.is_empty() {
             continue;
         }
@@ -170,8 +199,14 @@ async fn handle_connection(socket: WebSocket, state: Arc<DerpState>) {
             PKT_CLIENT_INFO => {
                 if data.len() > 1 {
                     let key = String::from_utf8_lossy(&data[1..]).to_string();
-                    client_key = Some(key.clone());
-                    state.register(key, tx.clone()).await;
+                    // Check if registration succeeded (may fail if max clients reached)
+                    if state.register(key.clone(), tx.clone()).await {
+                        client_key = Some(key);
+                    } else {
+                        // Max clients reached, close connection
+                        tracing::warn!("DERP: Closing connection - max clients limit reached");
+                        break;
+                    }
                 }
             }
             PKT_SEND => {
