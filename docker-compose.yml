@@ -11,18 +11,36 @@ services:
       - DATABASE_URL=sqlite:/data/burrow.db?mode=rwc
       - BIND_ADDR=0.0.0.0:3000
       - RUST_LOG=info
+      - JWT_SECRET=${JWT_SECRET:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173}
+      # Email settings (optional)
+      - EMAIL_PROVIDER=${EMAIL_PROVIDER:-console}
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAIL_FROM=${EMAIL_FROM:-noreply@burrow.local}
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   burrow-web:
     build:
       context: ./web
       dockerfile: Dockerfile
     ports:
-      - "5173:5173"
+      - "5173:3000"
     environment:
-      - API_URL=http://burrow-server:3000
+      - VITE_API_URL=http://burrow-server:3000
     depends_on:
-      - burrow-server
+      burrow-server:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   burrow-data:
