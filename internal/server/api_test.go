@@ -963,3 +963,177 @@ func TestConnectExpiredClient(t *testing.T) {
 		t.Errorf("status: got %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 }
+
+func TestConnectTracksSession(t *testing.T) {
+	api, _, db := setupTestAPI(t)
+	router := api.Router()
+
+	db.CreateClient(context.Background(), &store.Client{
+		ID: "track-1", Name: "Track Me", Token: "track-token", CreatedAt: time.Now().UTC(),
+	})
+
+	rec := doRequest(t, router, "POST", "/api/connect", map[string]string{"token": "track-token"}, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	if api.tracker.ActiveSessions() != 1 {
+		t.Errorf("active sessions: got %d, want 1", api.tracker.ActiveSessions())
+	}
+
+	client, err := db.GetClientByToken(context.Background(), "track-token")
+	if err != nil {
+		t.Fatalf("get client: %v", err)
+	}
+	if client.LastConnectedAt == nil {
+		t.Error("last_connected_at should be set after connect")
+	}
+}
+
+func TestDisconnectEndpoint(t *testing.T) {
+	api, _, db := setupTestAPI(t)
+	router := api.Router()
+
+	db.CreateClient(context.Background(), &store.Client{
+		ID: "disc-1", Name: "Disconnect Me", Token: "disc-token", CreatedAt: time.Now().UTC(),
+	})
+
+	doRequest(t, router, "POST", "/api/connect", map[string]string{"token": "disc-token"}, "")
+
+	rec := doRequest(t, router, "POST", "/api/disconnect", map[string]any{
+		"token":      "disc-token",
+		"bytes_up":   1024,
+		"bytes_down": 2048,
+	}, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	if api.tracker.ActiveSessions() != 0 {
+		t.Errorf("active sessions: got %d, want 0", api.tracker.ActiveSessions())
+	}
+
+	client, err := db.GetClientByToken(context.Background(), "disc-token")
+	if err != nil {
+		t.Fatalf("get client: %v", err)
+	}
+	if client.BytesUp != 1024 {
+		t.Errorf("bytes_up: got %d, want 1024", client.BytesUp)
+	}
+	if client.BytesDown != 2048 {
+		t.Errorf("bytes_down: got %d, want 2048", client.BytesDown)
+	}
+}
+
+func TestDisconnectMissingToken(t *testing.T) {
+	api, _, _ := setupTestAPI(t)
+	router := api.Router()
+
+	rec := doRequest(t, router, "POST", "/api/disconnect", map[string]any{
+		"bytes_up":   100,
+		"bytes_down": 200,
+	}, "")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestHeartbeatEndpoint(t *testing.T) {
+	api, _, db := setupTestAPI(t)
+	router := api.Router()
+
+	db.CreateClient(context.Background(), &store.Client{
+		ID: "hb-1", Name: "Heartbeat Me", Token: "hb-token", CreatedAt: time.Now().UTC(),
+	})
+
+	doRequest(t, router, "POST", "/api/connect", map[string]string{"token": "hb-token"}, "")
+
+	rec := doRequest(t, router, "POST", "/api/heartbeat", map[string]any{
+		"token":      "hb-token",
+		"bytes_up":   500,
+		"bytes_down": 1000,
+	}, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	if api.tracker.ActiveSessions() != 1 {
+		t.Errorf("active sessions: got %d, want 1", api.tracker.ActiveSessions())
+	}
+
+	client, err := db.GetClientByToken(context.Background(), "hb-token")
+	if err != nil {
+		t.Fatalf("get client: %v", err)
+	}
+	if client.BytesUp != 500 {
+		t.Errorf("bytes_up: got %d, want 500", client.BytesUp)
+	}
+	if client.BytesDown != 1000 {
+		t.Errorf("bytes_down: got %d, want 1000", client.BytesDown)
+	}
+}
+
+func TestHeartbeatMissingToken(t *testing.T) {
+	api, _, _ := setupTestAPI(t)
+	router := api.Router()
+
+	rec := doRequest(t, router, "POST", "/api/heartbeat", map[string]any{
+		"bytes_up":   100,
+		"bytes_down": 200,
+	}, "")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestConnectThenHeartbeatThenDisconnect(t *testing.T) {
+	api, _, db := setupTestAPI(t)
+	router := api.Router()
+
+	db.CreateClient(context.Background(), &store.Client{
+		ID: "full-1", Name: "Full Flow", Token: "full-token", CreatedAt: time.Now().UTC(),
+	})
+
+	rec := doRequest(t, router, "POST", "/api/connect", map[string]string{"token": "full-token"}, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("connect: got %d", rec.Code)
+	}
+
+	rec = doRequest(t, router, "POST", "/api/heartbeat", map[string]any{
+		"token": "full-token", "bytes_up": 100, "bytes_down": 200,
+	}, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("heartbeat 1: got %d", rec.Code)
+	}
+
+	rec = doRequest(t, router, "POST", "/api/heartbeat", map[string]any{
+		"token": "full-token", "bytes_up": 150, "bytes_down": 300,
+	}, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("heartbeat 2: got %d", rec.Code)
+	}
+
+	rec = doRequest(t, router, "POST", "/api/disconnect", map[string]any{
+		"token": "full-token", "bytes_up": 50, "bytes_down": 100,
+	}, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disconnect: got %d", rec.Code)
+	}
+
+	if api.tracker.ActiveSessions() != 0 {
+		t.Errorf("active sessions: got %d, want 0", api.tracker.ActiveSessions())
+	}
+
+	client, err := db.GetClientByToken(context.Background(), "full-token")
+	if err != nil {
+		t.Fatalf("get client: %v", err)
+	}
+	expectedUp := int64(100 + 150 + 50)
+	expectedDown := int64(200 + 300 + 100)
+	if client.BytesUp != expectedUp {
+		t.Errorf("bytes_up: got %d, want %d", client.BytesUp, expectedUp)
+	}
+	if client.BytesDown != expectedDown {
+		t.Errorf("bytes_down: got %d, want %d", client.BytesDown, expectedDown)
+	}
+}

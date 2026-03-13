@@ -20,6 +20,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type API struct {
@@ -32,11 +34,17 @@ type API struct {
 	logBuffer  *LogBuffer
 	startedAt  time.Time
 	dbPath     string
+	metrics    *Metrics
+	metricsReg *prometheus.Registry
+	tracker    *ConnectionTracker
 }
 
 func NewAPI(s store.Store, auth *Auth, cfg *ServerConfig, serverAddr string) *API {
 	rl := newLoginRateLimiter()
 	go rl.cleanup()
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(prometheus.NewGoCollector())
+	m := NewMetrics(reg)
 	return &API{
 		store:      s,
 		auth:       auth,
@@ -45,6 +53,9 @@ func NewAPI(s store.Store, auth *Auth, cfg *ServerConfig, serverAddr string) *AP
 		loginRL:    rl,
 		startedAt:  time.Now(),
 		dbPath:     cfg.DatabasePath(),
+		metrics:    m,
+		metricsReg: reg,
+		tracker:    NewConnectionTracker(s),
 	}
 }
 
@@ -55,12 +66,16 @@ func (a *API) SetConfigPath(path string) {
 func (a *API) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
+	r.Use(a.metrics.Middleware)
 
 	r.Get("/health", a.handleHealth)
+	r.Handle("/metrics", promhttp.HandlerFor(a.metricsReg, promhttp.HandlerOpts{}))
 
 	r.Post("/api/auth/login", a.handleLogin)
 
 	r.Post("/api/connect", a.handleConnect)
+	r.Post("/api/disconnect", a.handleDisconnect)
+	r.Post("/api/heartbeat", a.handleHeartbeat)
 
 	r.Group(func(r chi.Router) {
 		r.Use(a.auth.Middleware)
@@ -124,12 +139,13 @@ func (a *API) handleHealthDetailed(w http.ResponseWriter, r *http.Request) {
 			"sys_bytes":         mem.Sys,
 			"num_gc":            uint64(mem.NumGC),
 		},
-		"goroutines":        runtime.NumGoroutine(),
-		"total_clients":     stats.TotalClients,
-		"active_clients":    stats.ActiveClients,
-		"revoked_clients":   stats.RevokedClients,
-		"total_connections": stats.TotalConnections,
-		"db_size_bytes":     dbSizeBytes,
+		"goroutines":          runtime.NumGoroutine(),
+		"total_clients":       stats.TotalClients,
+		"active_clients":      stats.ActiveClients,
+		"revoked_clients":     stats.RevokedClients,
+		"total_connections":   stats.TotalConnections,
+		"active_connections":  a.tracker.ActiveSessions(),
+		"db_size_bytes":       dbSizeBytes,
 	})
 }
 
@@ -257,6 +273,10 @@ func (a *API) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, err := a.tracker.RecordConnect(r.Context(), client.Token, client.ID, "vless-reality"); err != nil {
+		slog.Warn("record connect", "token", client.Token, "error", err)
+	}
+
 	protocols := []map[string]any{
 		{
 			"type":        "vless",
@@ -312,6 +332,56 @@ func (a *API) handleConnect(w http.ResponseWriter, r *http.Request) {
 		"name":      client.Name,
 		"protocols": protocols,
 	})
+}
+
+func (a *API) handleDisconnect(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+	var req struct {
+		Token     string `json:"token"`
+		BytesUp   int64  `json:"bytes_up"`
+		BytesDown int64  `json:"bytes_down"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if req.Token == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "token is required"})
+		return
+	}
+
+	if err := a.tracker.RecordDisconnect(r.Context(), req.Token, req.BytesUp, req.BytesDown); err != nil {
+		slog.Error("record disconnect", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (a *API) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+	var req struct {
+		Token     string `json:"token"`
+		BytesUp   int64  `json:"bytes_up"`
+		BytesDown int64  `json:"bytes_down"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if req.Token == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "token is required"})
+		return
+	}
+
+	if err := a.tracker.RecordHeartbeat(r.Context(), req.Token, req.BytesUp, req.BytesDown); err != nil {
+		slog.Error("record heartbeat", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (a *API) handleListInvites(w http.ResponseWriter, r *http.Request) {

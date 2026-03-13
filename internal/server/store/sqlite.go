@@ -154,7 +154,7 @@ func (s *SQLiteStore) UpdateClient(ctx context.Context, c *Client) error {
 
 func (s *SQLiteStore) RecordTraffic(ctx context.Context, token string, bytesUp, bytesDown int64) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE clients SET bytes_up = bytes_up + ?, bytes_down = bytes_down + ?, last_connected_at = datetime('now') WHERE token = ? AND revoked = 0`,
+		`UPDATE clients SET bytes_up = bytes_up + ?, bytes_down = bytes_down + ?, last_connected_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE token = ? AND revoked = 0`,
 		bytesUp, bytesDown, token)
 	return err
 }
@@ -212,7 +212,7 @@ func (s *SQLiteStore) CreateConnection(ctx context.Context, c *Connection) error
 
 func (s *SQLiteStore) CloseConnection(ctx context.Context, id int64, bytesUp, bytesDown int64) error {
 	_, err := s.db.ExecContext(ctx,
-		"UPDATE connections SET disconnected_at = datetime('now'), bytes_up = ?, bytes_down = ? WHERE id = ?",
+		"UPDATE connections SET disconnected_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), bytes_up = ?, bytes_down = ? WHERE id = ?",
 		bytesUp, bytesDown, id,
 	)
 	return err

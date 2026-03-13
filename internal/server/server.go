@@ -13,11 +13,12 @@ import (
 )
 
 type Server struct {
-	config    *ServerConfig
-	transport *Transport
-	store     store.Store
-	api       *API
-	httpSrv   *http.Server
+	config      *ServerConfig
+	transport   *Transport
+	store       store.Store
+	api         *API
+	httpSrv     *http.Server
+	metricsStop chan struct{}
 }
 
 func New(cfg *ServerConfig) (*Server, error) {
@@ -46,10 +47,11 @@ func New(cfg *ServerConfig) (*Server, error) {
 	api.logBuffer = NewLogBuffer(500)
 
 	return &Server{
-		config:    cfg,
-		transport: transport,
-		store:     db,
-		api:       api,
+		config:      cfg,
+		transport:   transport,
+		store:       db,
+		api:         api,
+		metricsStop: make(chan struct{}),
 	}, nil
 }
 
@@ -87,6 +89,9 @@ func (s *Server) Start() error {
 		}
 	}()
 
+	go s.runMetricsUpdater()
+	go s.api.tracker.Run()
+
 	slog.Info("burrow server running",
 		"vless_reality", fmt.Sprintf(":%d", s.config.ListenPort),
 		"api", addr,
@@ -98,8 +103,23 @@ func (s *Server) Wait() {
 	s.transport.Wait()
 }
 
+func (s *Server) runMetricsUpdater() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			s.api.metrics.Update(s.store, s.api.startedAt, s.api.tracker.ActiveSessions())
+		case <-s.metricsStop:
+			return
+		}
+	}
+}
+
 func (s *Server) Stop() error {
 	slog.Info("stopping burrow server")
+	close(s.metricsStop)
+	s.api.tracker.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
