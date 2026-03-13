@@ -91,13 +91,7 @@ func probeServer(addr string, port uint16, timeout time.Duration) bool {
 }
 
 func NewTunnelWithFallback(topts TunnelOptions) (*Tunnel, TransportMode, error) {
-	modes := []TransportMode{TransportDirect}
-	if topts.Invite.CDNHost != "" {
-		modes = append(modes, TransportCDN)
-	}
-
 	if topts.Transport != "" {
-		topts.Transport = topts.Transport
 		t, err := NewTunnel(topts)
 		return t, topts.Transport, err
 	}
