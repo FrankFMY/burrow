@@ -238,8 +238,8 @@ func (s *SQLiteStore) GetStats(ctx context.Context) (*Stats, error) {
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
 			COUNT(*) as total,
-			SUM(CASE WHEN revoked = 0 THEN 1 ELSE 0 END) as active,
-			SUM(CASE WHEN revoked = 1 THEN 1 ELSE 0 END) as revoked,
+			COALESCE(SUM(CASE WHEN revoked = 0 THEN 1 ELSE 0 END), 0) as active,
+			COALESCE(SUM(CASE WHEN revoked = 1 THEN 1 ELSE 0 END), 0) as revoked,
 			COALESCE(SUM(bytes_up), 0) as bytes_up,
 			COALESCE(SUM(bytes_down), 0) as bytes_down
 		FROM clients

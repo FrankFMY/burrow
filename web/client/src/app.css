@@ -1,24 +1,119 @@
 @import 'tailwindcss';
 
 :root {
-	--bg-primary: #0a0a0f;
-	--bg-secondary: #12121a;
-	--bg-card: #1a1a25;
-	--bg-card-hover: #22222f;
-	--border: #2a2a3a;
+	--bg-primary: #07080e;
+	--bg-secondary: #0d0f18;
+	--bg-card: #131622;
+	--bg-card-hover: #1a1d2e;
+	--border: #1e2235;
+	--border-hover: #6366f1;
 	--text-primary: #e8e8f0;
-	--text-secondary: #8888a0;
+	--text-secondary: #7878a0;
 	--accent: #6366f1;
 	--accent-hover: #818cf8;
+	--accent-glow: rgba(99, 102, 241, 0.15);
 	--success: #22c55e;
+	--success-glow: rgba(34, 197, 94, 0.2);
 	--danger: #ef4444;
+	--danger-glow: rgba(239, 68, 68, 0.15);
 	--warning: #f59e0b;
 }
 
 body {
 	background: var(--bg-primary);
 	color: var(--text-primary);
-	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+	font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 	margin: 0;
 	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+body::before {
+	content: '';
+	position: fixed;
+	inset: 0;
+	background:
+		radial-gradient(ellipse 60% 40% at 50% 0%, rgba(99, 102, 241, 0.06), transparent),
+		radial-gradient(ellipse 50% 30% at 80% 80%, rgba(99, 102, 241, 0.03), transparent);
+	pointer-events: none;
+	z-index: -1;
+}
+
+@keyframes fadeIn {
+	from { opacity: 0; transform: translateY(8px); }
+	to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInScale {
+	from { opacity: 0; transform: scale(0.95); }
+	to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pulse-ring {
+	0% { transform: scale(1); opacity: 0.6; }
+	100% { transform: scale(1.4); opacity: 0; }
+}
+
+@keyframes shimmer {
+	0% { background-position: -200% 0; }
+	100% { background-position: 200% 0; }
+}
+
+@keyframes spin {
+	to { transform: rotate(360deg); }
+}
+
+@keyframes pulse-soft {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.7; }
+}
+
+.animate-in {
+	animation: fadeIn 0.3s ease-out;
+}
+
+.animate-in-scale {
+	animation: fadeInScale 0.3s ease-out;
+}
+
+.skeleton {
+	background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-card-hover) 50%, var(--bg-card) 75%);
+	background-size: 200% 100%;
+	animation: shimmer 1.5s ease-in-out infinite;
+	border-radius: 6px;
+}
+
+.spinner {
+	width: 16px;
+	height: 16px;
+	border: 2px solid transparent;
+	border-top-color: currentColor;
+	border-radius: 50%;
+	animation: spin 0.6s linear infinite;
+	display: inline-block;
+}
+
+.card-interactive {
+	transition: all 0.2s ease;
+	border: 1px solid var(--border);
+}
+.card-interactive:hover {
+	border-color: var(--border-hover);
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(99, 102, 241, 0.1);
+	transform: translateY(-1px);
+}
+
+input:focus, select:focus {
+	border-color: var(--accent) !important;
+	box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+
+button:focus-visible, a:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
 }

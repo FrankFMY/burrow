@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Burrow - Secure VPN</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#07080e;--bg2:#0d0f18;--card:#131622;--border:#1e2235;--text:#e8e8f0;--muted:#7878a0;--accent:#6366f1;--accent2:#818cf8;--success:#22c55e}
+body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden}
+a{color:var(--accent);text-decoration:none}
+a:hover{color:var(--accent2)}
+
+.bg-glow{position:fixed;inset:0;pointer-events:none;z-index:0}
+.bg-glow::before{content:'';position:absolute;top:-30%;left:50%;transform:translateX(-50%);width:800px;height:600px;background:radial-gradient(ellipse,rgba(99,102,241,0.08),transparent 70%)}
+.bg-glow::after{content:'';position:absolute;bottom:-20%;right:10%;width:600px;height:500px;background:radial-gradient(ellipse,rgba(99,102,241,0.04),transparent 70%)}
+
+.container{max-width:1100px;margin:0 auto;padding:0 24px;position:relative;z-index:1}
+
+/* Header */
+header{padding:20px 0;border-bottom:1px solid var(--border)}
+.header-inner{display:flex;align-items:center;justify-content:space-between}
+.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:20px}
+.logo-icon{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#6366f1,#8b5cf6);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px;box-shadow:0 4px 12px rgba(99,102,241,0.3)}
+.header-links{display:flex;gap:8px;align-items:center}
+.header-links a{padding:8px 16px;border-radius:8px;font-size:14px;transition:all 0.2s}
+.header-links a:hover{background:rgba(99,102,241,0.1)}
+.btn-primary{background:linear-gradient(135deg,#6366f1,#7c3aed)!important;color:#fff!important;font-weight:500;box-shadow:0 4px 16px rgba(99,102,241,0.3)}
+.btn-primary:hover{box-shadow:0 6px 24px rgba(99,102,241,0.4);transform:translateY(-1px)}
+
+/* Hero */
+.hero{text-align:center;padding:100px 0 80px}
+.hero-badge{display:inline-flex;align-items:center;gap:8px;padding:6px 16px;border-radius:100px;background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.2);font-size:13px;color:var(--accent2);margin-bottom:24px}
+.hero-badge svg{width:14px;height:14px}
+.hero h1{font-size:clamp(36px,6vw,64px);font-weight:700;line-height:1.1;margin-bottom:20px;letter-spacing:-0.02em}
+.hero h1 span{background:linear-gradient(135deg,#6366f1,#a78bfa,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero p{font-size:clamp(16px,2vw,20px);color:var(--muted);max-width:600px;margin:0 auto 40px;line-height:1.6}
+.hero-actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.hero-btn{padding:14px 32px;border-radius:12px;font-size:16px;font-weight:500;transition:all 0.2s;display:inline-flex;align-items:center;gap:8px;border:none;cursor:pointer}
+.hero-btn-primary{background:linear-gradient(135deg,#6366f1,#7c3aed);color:#fff;box-shadow:0 4px 20px rgba(99,102,241,0.3)}
+.hero-btn-primary:hover{box-shadow:0 6px 28px rgba(99,102,241,0.4);transform:translateY(-2px);color:#fff}
+.hero-btn-secondary{background:var(--card);color:var(--text);border:1px solid var(--border)}
+.hero-btn-secondary:hover{border-color:var(--accent);box-shadow:0 4px 16px rgba(0,0,0,0.3);color:var(--text)}
+
+/* Features */
+.features{padding:80px 0}
+.features-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px}
+.feature-card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:28px;transition:all 0.2s}
+.feature-card:hover{border-color:rgba(99,102,241,0.3);box-shadow:0 8px 32px rgba(0,0,0,0.2);transform:translateY(-2px)}
+.feature-icon{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;margin-bottom:16px;background:rgba(99,102,241,0.1);color:var(--accent)}
+.feature-card h3{font-size:18px;font-weight:600;margin-bottom:8px}
+.feature-card p{font-size:14px;color:var(--muted);line-height:1.6}
+
+/* Protocols */
+.protocols{padding:60px 0 80px}
+.protocols h2{text-align:center;font-size:clamp(24px,4vw,36px);margin-bottom:12px;font-weight:700}
+.protocols .sub{text-align:center;color:var(--muted);margin-bottom:40px;font-size:16px}
+.proto-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+.proto-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px;text-align:center;transition:all 0.2s}
+.proto-card:hover{border-color:rgba(99,102,241,0.3);transform:translateY(-2px)}
+.proto-card h4{font-size:16px;font-weight:600;margin-bottom:6px}
+.proto-card p{font-size:13px;color:var(--muted);line-height:1.5}
+.proto-tag{display:inline-block;padding:3px 10px;border-radius:100px;font-size:11px;font-weight:500;margin-bottom:12px}
+.proto-tag.green{background:rgba(34,197,94,0.15);color:#4ade80;border:1px solid rgba(34,197,94,0.2)}
+.proto-tag.blue{background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.2)}
+.proto-tag.purple{background:rgba(168,85,247,0.15);color:#c084fc;border:1px solid rgba(168,85,247,0.2)}
+.proto-tag.amber{background:rgba(245,158,11,0.15);color:#fbbf24;border:1px solid rgba(245,158,11,0.2)}
+
+/* Footer */
+footer{border-top:1px solid var(--border);padding:32px 0;text-align:center;color:var(--muted);font-size:13px}
+footer a{color:var(--muted)}
+footer a:hover{color:var(--accent2)}
+
+/* Animation */
+@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+.fade-up{animation:fadeUp 0.6s ease-out both}
+.delay-1{animation-delay:0.1s}
+.delay-2{animation-delay:0.2s}
+.delay-3{animation-delay:0.3s}
+.delay-4{animation-delay:0.4s}
+
+/* Responsive */
+@media(max-width:640px){
+.hero{padding:60px 0 50px}
+.hero-actions{flex-direction:column;align-items:center}
+.hero-btn{width:100%;max-width:280px;justify-content:center}
+.header-links .hide-mobile{display:none}
+.features-grid{grid-template-columns:1fr}
+.proto-grid{grid-template-columns:1fr 1fr}
+}
+@media(max-width:400px){
+.proto-grid{grid-template-columns:1fr}
+}
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<div class="bg-glow"></div>
+
+<header>
+<div class="container header-inner">
+	<div class="logo">
+		<div class="logo-icon">B</div>
+		Burrow
+	</div>
+	<div class="header-links">
+		<a href="https://github.com/FrankFMY/burrow" class="hide-mobile">GitHub</a>
+		<a href="/admin" class="btn-primary">Admin Panel</a>
+	</div>
+</div>
+</header>
+
+<section class="hero">
+<div class="container">
+	<div class="hero-badge fade-up">
+		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+		Self-hosted &middot; Multi-protocol &middot; Censorship-resistant
+	</div>
+	<h1 class="fade-up delay-1">Your private tunnel<br>to the <span>free internet</span></h1>
+	<p class="fade-up delay-2">Multi-protocol VPN server powered by sing-box. Designed to bypass DPI, resist censorship, and keep your traffic invisible.</p>
+	<div class="hero-actions fade-up delay-3">
+		<a href="/admin" class="hero-btn hero-btn-primary">
+			<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+			Admin Panel
+		</a>
+		<a href="https://github.com/FrankFMY/burrow" class="hero-btn hero-btn-secondary">
+			<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+			View on GitHub
+		</a>
+	</div>
+</div>
+</section>
+
+<section class="features">
+<div class="container">
+	<div class="features-grid">
+		<div class="feature-card fade-up delay-1">
+			<div class="feature-icon">
+				<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/></svg>
+			</div>
+			<h3>Invisible to DPI</h3>
+			<p>VLESS+Reality with uTLS makes your traffic indistinguishable from regular HTTPS connections to popular websites.</p>
+		</div>
+		<div class="feature-card fade-up delay-2">
+			<div class="feature-icon">
+				<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+			</div>
+			<h3>Multi-Protocol</h3>
+			<p>VLESS+Reality, Hysteria2, Shadowsocks 2022, and WireGuard. One server, multiple ways to connect — automatic fallback.</p>
+		</div>
+		<div class="feature-card fade-up delay-3">
+			<div class="feature-icon">
+				<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+			</div>
+			<h3>Invite-Only Access</h3>
+			<p>No public registration. Generate secure invite links for people you trust. Revoke access instantly when needed.</p>
+		</div>
+		<div class="feature-card fade-up delay-4">
+			<div class="feature-icon">
+				<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/></svg>
+			</div>
+			<h3>Self-Hosted</h3>
+			<p>Run on your own server. Single Go binary + SQLite. No external dependencies. Full control over your data.</p>
+		</div>
+		<div class="feature-card fade-up delay-4">
+			<div class="feature-icon">
+				<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+			</div>
+			<h3>Desktop Client</h3>
+			<p>Native desktop application for Windows, macOS, and Linux. One-click connect with kill switch protection.</p>
+		</div>
+		<div class="feature-card fade-up delay-4">
+			<div class="feature-icon">
+				<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+			</div>
+			<h3>Admin Dashboard</h3>
+			<p>Beautiful web UI to manage clients, create invites, monitor traffic, and configure your server in real-time.</p>
+		</div>
+	</div>
+</div>
+</section>
+
+<section class="protocols">
+<div class="container">
+	<h2 class="fade-up">Supported Protocols</h2>
+	<p class="sub fade-up delay-1">Choose the best protocol for your network conditions</p>
+	<div class="proto-grid">
+		<div class="proto-card fade-up delay-1">
+			<span class="proto-tag green">Recommended</span>
+			<h4>VLESS + Reality</h4>
+			<p>Undetectable by DPI. Mimics TLS to real websites. The gold standard for censorship circumvention.</p>
+		</div>
+		<div class="proto-card fade-up delay-2">
+			<span class="proto-tag blue">Fast</span>
+			<h4>Hysteria2</h4>
+			<p>QUIC-based protocol. Optimized for lossy networks with built-in congestion control.</p>
+		</div>
+		<div class="proto-card fade-up delay-3">
+			<span class="proto-tag purple">Classic</span>
+			<h4>Shadowsocks 2022</h4>
+			<p>Updated version of the battle-tested protocol. AEAD encryption with replay protection.</p>
+		</div>
+		<div class="proto-card fade-up delay-4">
+			<span class="proto-tag amber">Kernel</span>
+			<h4>WireGuard</h4>
+			<p>Modern VPN protocol. Minimal attack surface, excellent performance on stable networks.</p>
+		</div>
+	</div>
+</div>
+</section>
+
+<footer>
+<div class="container">
+	<p>Burrow &mdash; Self-hosted multi-protocol VPN. <a href="https://github.com/FrankFMY/burrow">Open source</a>.</p>
+</div>
+</footer>
+
+</body>
+</html>

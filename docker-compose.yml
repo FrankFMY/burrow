@@ -1,0 +1,16 @@
+services:
+  burrow:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "8080:8080"
+      - "8443:8443"
+      - "8388:8388"
+    volumes:
+      - ./config:/etc/burrow
+      - burrow-data:/var/lib/burrow
+    command: ["run", "--config", "/etc/burrow/burrow-server.json"]
+
+volumes:
+  burrow-data:

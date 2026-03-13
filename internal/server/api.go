@@ -67,6 +67,8 @@ func (a *API) Router() http.Handler {
 	})
 	r.Handle("/admin/*", a.adminHandler())
 
+	r.Get("/", a.handleLanding)
+
 	return r
 }
 
@@ -341,6 +343,11 @@ func (a *API) adminHandler() http.Handler {
 
 		http.StripPrefix("/admin", fileServer).ServeHTTP(w, r)
 	})
+}
+
+func (a *API) handleLanding(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(embedfs.LandingHTML)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
