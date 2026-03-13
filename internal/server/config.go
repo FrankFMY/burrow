@@ -19,17 +19,18 @@ const (
 )
 
 type ServerConfig struct {
-	ListenPort        uint16 `json:"listen_port"`
-	APIPort           uint16 `json:"api_port"`
-	CamouflageSNI     string `json:"camouflage_sni"`
-	RealityPrivateKey string `json:"reality_private_key"`
-	RealityPublicKey  string `json:"reality_public_key"`
-	ShortID           string `json:"short_id"`
-	AdminPasswordHash string `json:"admin_password_hash"`
-	JWTSecret         string `json:"jwt_secret"`
-	ServerAddr        string `json:"server_addr"`
-	DataDir           string `json:"data_dir"`
-	Users             []User `json:"users"`
+	ListenPort        uint16   `json:"listen_port"`
+	APIPort           uint16   `json:"api_port"`
+	CamouflageSNI     string   `json:"camouflage_sni"`
+	RealityPrivateKey string   `json:"reality_private_key"`
+	RealityPublicKey  string   `json:"reality_public_key"`
+	ShortID           string   `json:"short_id"`
+	AdminPasswordHash string   `json:"admin_password_hash"`
+	JWTSecret         string   `json:"jwt_secret"`
+	ServerAddr        string   `json:"server_addr"`
+	DataDir           string   `json:"data_dir"`
+	Users             []User   `json:"users"`
+	LegacyPublicKeys  []string `json:"legacy_public_keys,omitempty"`
 
 	Hysteria2    *Hysteria2Config       `json:"hysteria2,omitempty"`
 	SS2022       *Shadowsocks2022Config `json:"ss2022,omitempty"`
@@ -125,6 +126,42 @@ func AddUser(cfg *ServerConfig, name string) (User, error) {
 	}
 	cfg.Users = append(cfg.Users, u)
 	return u, nil
+}
+
+type RotateKeysResult struct {
+	PublicKey string
+	ShortID   string
+}
+
+func RotateKeys(cfg *ServerConfig) (*RotateKeysResult, error) {
+	keys, err := shared.GenerateRealityKeyPair()
+	if err != nil {
+		return nil, fmt.Errorf("generate reality keypair: %w", err)
+	}
+
+	jwtSecret, err := shared.GeneratePassword(32)
+	if err != nil {
+		return nil, fmt.Errorf("generate jwt secret: %w", err)
+	}
+
+	shortID, err := shared.GenerateShortID()
+	if err != nil {
+		return nil, fmt.Errorf("generate short id: %w", err)
+	}
+
+	if cfg.RealityPublicKey != "" {
+		cfg.LegacyPublicKeys = append(cfg.LegacyPublicKeys, cfg.RealityPublicKey)
+	}
+
+	cfg.RealityPrivateKey = keys.PrivateKey
+	cfg.RealityPublicKey = keys.PublicKey
+	cfg.ShortID = shortID
+	cfg.JWTSecret = jwtSecret
+
+	return &RotateKeysResult{
+		PublicKey: keys.PublicKey,
+		ShortID:   shortID,
+	}, nil
 }
 
 func GenerateConfig(port, apiPort uint16, sni, password, serverAddr, dataDir string) (*ServerConfig, error) {

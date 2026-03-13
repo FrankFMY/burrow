@@ -358,6 +358,130 @@ func TestSaveAndLoadCDNWebSocketConfig(t *testing.T) {
 	}
 }
 
+func TestRotateKeysGeneratesNewValues(t *testing.T) {
+	cfg := &ServerConfig{
+		RealityPrivateKey: "old-private",
+		RealityPublicKey:  "old-public",
+		ShortID:           "old-short",
+		JWTSecret:         "old-secret",
+	}
+
+	result, err := RotateKeys(cfg)
+	if err != nil {
+		t.Fatalf("RotateKeys: %v", err)
+	}
+
+	if cfg.RealityPublicKey == "old-public" {
+		t.Error("public key should have changed")
+	}
+	if cfg.RealityPrivateKey == "old-private" {
+		t.Error("private key should have changed")
+	}
+	if cfg.ShortID == "old-short" {
+		t.Error("short_id should have changed")
+	}
+	if cfg.JWTSecret == "old-secret" {
+		t.Error("jwt secret should have changed")
+	}
+	if result.PublicKey != cfg.RealityPublicKey {
+		t.Error("result public key should match config")
+	}
+	if result.ShortID != cfg.ShortID {
+		t.Error("result short_id should match config")
+	}
+}
+
+func TestRotateKeysPreservesLegacyPublicKeys(t *testing.T) {
+	cfg := &ServerConfig{
+		RealityPrivateKey: "priv1",
+		RealityPublicKey:  "pub1",
+		ShortID:           "s1",
+		JWTSecret:         "jwt1",
+	}
+
+	_, err := RotateKeys(cfg)
+	if err != nil {
+		t.Fatalf("first RotateKeys: %v", err)
+	}
+	if len(cfg.LegacyPublicKeys) != 1 {
+		t.Fatalf("legacy keys after first rotation: got %d, want 1", len(cfg.LegacyPublicKeys))
+	}
+	if cfg.LegacyPublicKeys[0] != "pub1" {
+		t.Errorf("legacy[0]: got %q, want %q", cfg.LegacyPublicKeys[0], "pub1")
+	}
+
+	secondPub := cfg.RealityPublicKey
+	_, err = RotateKeys(cfg)
+	if err != nil {
+		t.Fatalf("second RotateKeys: %v", err)
+	}
+	if len(cfg.LegacyPublicKeys) != 2 {
+		t.Fatalf("legacy keys after second rotation: got %d, want 2", len(cfg.LegacyPublicKeys))
+	}
+	if cfg.LegacyPublicKeys[1] != secondPub {
+		t.Errorf("legacy[1]: got %q, want %q", cfg.LegacyPublicKeys[1], secondPub)
+	}
+}
+
+func TestRotateKeysEmptyPublicKeyNoLegacy(t *testing.T) {
+	cfg := &ServerConfig{
+		RealityPublicKey: "",
+		JWTSecret:        "old",
+	}
+
+	_, err := RotateKeys(cfg)
+	if err != nil {
+		t.Fatalf("RotateKeys: %v", err)
+	}
+
+	if len(cfg.LegacyPublicKeys) != 0 {
+		t.Errorf("should not add empty key to legacy, got %d", len(cfg.LegacyPublicKeys))
+	}
+}
+
+func TestRotateKeysSaveAndLoad(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "rotate-config.json")
+
+	cfg := &ServerConfig{
+		ListenPort:        443,
+		APIPort:           8080,
+		RealityPrivateKey: "old-priv",
+		RealityPublicKey:  "old-pub",
+		ShortID:           "old-sid",
+		JWTSecret:         "old-jwt",
+		ServerAddr:        "1.2.3.4",
+		DataDir:           dir,
+	}
+
+	_, err := RotateKeys(cfg)
+	if err != nil {
+		t.Fatalf("RotateKeys: %v", err)
+	}
+
+	if err := SaveConfig(cfgPath, cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	loaded, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	if loaded.RealityPublicKey != cfg.RealityPublicKey {
+		t.Error("loaded public key should match")
+	}
+	if loaded.ShortID != cfg.ShortID {
+		t.Error("loaded short_id should match")
+	}
+	if loaded.JWTSecret != cfg.JWTSecret {
+		t.Error("loaded jwt secret should match")
+	}
+	if len(loaded.LegacyPublicKeys) != 1 || loaded.LegacyPublicKeys[0] != "old-pub" {
+		t.Errorf("loaded legacy keys: got %v, want [old-pub]", loaded.LegacyPublicKeys)
+	}
+}
+
 func TestSaveConfigFilePermissions(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")
