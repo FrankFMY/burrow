@@ -125,7 +125,7 @@ func GenerateConfig(port, apiPort uint16, sni, password, serverAddr, dataDir str
 		return nil, fmt.Errorf("hash password: %w", err)
 	}
 
-	jwtKP, err := shared.GenerateRealityKeyPair()
+	jwtSecret, err := shared.GeneratePassword(32)
 	if err != nil {
 		return nil, fmt.Errorf("generate jwt secret: %w", err)
 	}
@@ -166,7 +166,7 @@ func GenerateConfig(port, apiPort uint16, sni, password, serverAddr, dataDir str
 		RealityPublicKey:  keys.PublicKey,
 		ShortID:           shortID,
 		AdminPasswordHash: passwordHash,
-		JWTSecret:         jwtKP.PrivateKey,
+		JWTSecret:         jwtSecret,
 		ServerAddr:        serverAddr,
 		DataDir:           dataDir,
 		Hysteria2: &Hysteria2Config{

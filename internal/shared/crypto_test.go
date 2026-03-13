@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestGenerateRealityKeyPair(t *testing.T) {
@@ -159,6 +160,47 @@ func TestGenerateSelfSignedCertKeyPermissions(t *testing.T) {
 	perm := info.Mode().Perm()
 	if perm != 0600 {
 		t.Errorf("key file permissions: got %o, want 0600", perm)
+	}
+}
+
+func TestValidateKeyLength(t *testing.T) {
+	if err := ValidateKeyLength(make([]byte, 32), 32); err != nil {
+		t.Errorf("valid key length should pass: %v", err)
+	}
+	if err := ValidateKeyLength(make([]byte, 16), 32); err == nil {
+		t.Error("wrong key length should fail")
+	}
+	if err := ValidateKeyLength(nil, 32); err == nil {
+		t.Error("nil key should fail")
+	}
+	if err := ValidateKeyLength([]byte{}, 0); err != nil {
+		t.Errorf("zero-length key with zero expected should pass: %v", err)
+	}
+}
+
+func TestGenerateSelfSignedCertValidity(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "validity.crt")
+	keyPath := filepath.Join(dir, "validity.key")
+
+	if err := GenerateSelfSignedCert(certPath, keyPath); err != nil {
+		t.Fatalf("GenerateSelfSignedCert: %v", err)
+	}
+
+	certData, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatalf("read cert: %v", err)
+	}
+	block, _ := pem.Decode(certData)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse certificate: %v", err)
+	}
+
+	validity := cert.NotAfter.Sub(cert.NotBefore)
+	maxValidity := 366 * 24 * time.Hour
+	if validity > maxValidity {
+		t.Errorf("cert validity %v exceeds 1 year (%v)", validity, maxValidity)
 	}
 }
 

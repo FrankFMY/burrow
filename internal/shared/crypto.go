@@ -21,15 +21,37 @@ type RealityKeyPair struct {
 	PublicKey  string
 }
 
+func ValidateKeyLength(key []byte, expected int) error {
+	if len(key) != expected {
+		return fmt.Errorf("invalid key length: got %d, want %d", len(key), expected)
+	}
+	return nil
+}
+
+func isZero(b []byte) bool {
+	for _, v := range b {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func GenerateRealityKeyPair() (RealityKeyPair, error) {
 	var privateKey [32]byte
 	if _, err := rand.Read(privateKey[:]); err != nil {
 		return RealityKeyPair{}, fmt.Errorf("generate private key: %w", err)
 	}
+	if isZero(privateKey[:]) {
+		return RealityKeyPair{}, fmt.Errorf("generated private key is zero")
+	}
 
 	publicKey, err := curve25519.X25519(privateKey[:], curve25519.Basepoint)
 	if err != nil {
 		return RealityKeyPair{}, fmt.Errorf("derive public key: %w", err)
+	}
+	if isZero(publicKey) {
+		return RealityKeyPair{}, fmt.Errorf("derived public key is zero")
 	}
 
 	return RealityKeyPair{
@@ -73,7 +95,7 @@ func GenerateSelfSignedCert(certPath, keyPath string) error {
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: "burrow"},
 		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}

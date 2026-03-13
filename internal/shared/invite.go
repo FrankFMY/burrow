@@ -1,6 +1,8 @@
 package shared
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -17,6 +19,41 @@ type InviteData struct {
 	PublicKey string `json:"pk"`
 	ShortID   string `json:"sid"`
 	Name      string `json:"n,omitempty"`
+	Sig       string `json:"sig,omitempty"`
+}
+
+func invitePayload(data InviteData) ([]byte, error) {
+	clean := data
+	clean.Sig = ""
+	return json.Marshal(clean)
+}
+
+func SignInvite(data InviteData, secret string) string {
+	payload, err := invitePayload(data)
+	if err != nil {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(payload)
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func VerifyInvite(encoded string, secret string) (InviteData, error) {
+	data, err := DecodeInvite(encoded)
+	if err != nil {
+		return InviteData{}, err
+	}
+
+	if data.Sig == "" {
+		return data, nil
+	}
+
+	expected := SignInvite(data, secret)
+	if !hmac.Equal([]byte(data.Sig), []byte(expected)) {
+		return InviteData{}, fmt.Errorf("invalid invite signature")
+	}
+
+	return data, nil
 }
 
 func EncodeInvite(data InviteData) (string, error) {

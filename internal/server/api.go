@@ -128,11 +128,21 @@ func (a *API) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleConnect(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Token string `json:"token"`
+		Token  string `json:"token"`
+		Invite string `json:"invite,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 		return
+	}
+
+	if req.Invite != "" {
+		data, err := shared.VerifyInvite(req.Invite, a.config.JWTSecret)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid invite signature"})
+			return
+		}
+		req.Token = data.Token
 	}
 
 	client, err := a.store.GetClientByToken(r.Context(), req.Token)
@@ -256,6 +266,7 @@ func (a *API) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		ShortID:   a.config.ShortID,
 		Name:      client.Name,
 	}
+	invite.Sig = shared.SignInvite(invite, a.config.JWTSecret)
 	link, err := shared.EncodeInvite(invite)
 	if err != nil {
 		slog.Error("encode invite", "error", err)

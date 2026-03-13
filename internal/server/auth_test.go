@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestGenerateToken(t *testing.T) {
@@ -135,6 +136,25 @@ func TestHashPasswordAndCheck(t *testing.T) {
 
 	if !CheckPassword(hash, "my-password") {
 		t.Error("correct password should match")
+	}
+}
+
+func TestBcryptCostConstant(t *testing.T) {
+	if BcryptCost < 12 {
+		t.Errorf("BcryptCost should be at least 12, got %d", BcryptCost)
+	}
+
+	hash, err := HashPassword("cost-test")
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+
+	cost, err := bcrypt.Cost([]byte(hash))
+	if err != nil {
+		t.Fatalf("get cost: %v", err)
+	}
+	if cost != BcryptCost {
+		t.Errorf("bcrypt cost: got %d, want %d", cost, BcryptCost)
 	}
 }
 
