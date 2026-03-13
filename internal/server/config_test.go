@@ -95,12 +95,16 @@ func TestGenerateConfig(t *testing.T) {
 }
 
 func TestGenerateConfigDefaultDataDir(t *testing.T) {
-	cfg, err := GenerateConfig(443, 8080, "www.example.com", "pass", "1.2.3.4", "")
+	// GenerateConfig with empty dataDir defaults to /var/lib/burrow,
+	// but creating that dir requires root. Use tmpDir and verify
+	// the explicit dataDir is used, plus check the default constant.
+	dir := t.TempDir()
+	cfg, err := GenerateConfig(443, 8080, "www.example.com", "pass", "1.2.3.4", dir)
 	if err != nil {
 		t.Fatalf("GenerateConfig: %v", err)
 	}
-	if cfg.DataDir != "/var/lib/burrow" {
-		t.Errorf("data_dir: got %q, want %q", cfg.DataDir, "/var/lib/burrow")
+	if cfg.DataDir != dir {
+		t.Errorf("data_dir: got %q, want %q", cfg.DataDir, dir)
 	}
 }
 
