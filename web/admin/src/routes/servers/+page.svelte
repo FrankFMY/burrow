@@ -147,10 +147,7 @@
 			<div class="space-y-2">
 				{#each servers as server}
 					<div
-						class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 p-3 rounded-lg border transition-colors"
-						class:border-[var(--accent)]/30={server.isActive}
-						class:bg-[var(--accent)]/5={server.isActive}
-						class:border-[var(--border)]={!server.isActive}
+						class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 p-3 rounded-lg border transition-colors {server.isActive ? 'border-[var(--accent)] bg-[var(--accent-glow)]' : 'border-[var(--border)]'}"
 					>
 						<!-- Health dot + name -->
 						<div class="flex items-center gap-2.5 min-w-0 flex-1">
