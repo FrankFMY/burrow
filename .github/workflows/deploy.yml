@@ -19,7 +19,26 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
           script: |
-            cd /opt/burrow || exit 1
+            set -e
+            cd ~/projects/burrow
             git pull origin main
-            docker compose build --no-cache
-            docker compose up -d
+
+            # Build admin dashboard
+            cd web/admin
+            npm ci
+            npm run build
+            cd ../..
+
+            # Build server binary
+            go build -tags "with_utls,with_quic,with_gvisor,with_wireguard" \
+              -ldflags "-s -w \
+              -X github.com/FrankFMY/burrow/internal/shared.Version=$(git describe --tags --always 2>/dev/null || echo dev) \
+              -X github.com/FrankFMY/burrow/internal/shared.Commit=$(git rev-parse --short HEAD)" \
+              -o /tmp/burrow-server-new ./cmd/burrow-server
+
+            # Replace binary and restart
+            sudo cp /tmp/burrow-server-new /usr/local/bin/burrow-server
+            sudo systemctl restart burrow
+            sleep 2
+            curl -sf http://127.0.0.1:9080/health || exit 1
+            echo "Deploy successful"
