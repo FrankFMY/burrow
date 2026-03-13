@@ -100,7 +100,9 @@ func (s *Server) Stop() error {
 	defer cancel()
 
 	if s.httpSrv != nil {
-		s.httpSrv.Shutdown(ctx)
+		if err := s.httpSrv.Shutdown(ctx); err != nil {
+			slog.Error("http server shutdown", "error", err)
+		}
 	}
 
 	if err := s.transport.Close(); err != nil {

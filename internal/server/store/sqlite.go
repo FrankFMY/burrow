@@ -119,7 +119,7 @@ func (s *SQLiteStore) ListClients(ctx context.Context) ([]Client, error) {
 	}
 	defer rows.Close()
 
-	var clients []Client
+	clients := make([]Client, 0)
 	for rows.Next() {
 		c, err := s.scanClientRow(rows)
 		if err != nil {
@@ -145,8 +145,18 @@ func (s *SQLiteStore) UpdateClient(ctx context.Context, c *Client) error {
 }
 
 func (s *SQLiteStore) RevokeClient(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE clients SET revoked = 1 WHERE id = ?", id)
-	return err
+	result, err := s.db.ExecContext(ctx, "UPDATE clients SET revoked = 1 WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *SQLiteStore) ListActiveTokens(ctx context.Context) ([]string, error) {
@@ -158,7 +168,7 @@ func (s *SQLiteStore) ListActiveTokens(ctx context.Context) ([]string, error) {
 	}
 	defer rows.Close()
 
-	var tokens []string
+	tokens := make([]string, 0)
 	for rows.Next() {
 		var t string
 		if err := rows.Scan(&t); err != nil {
@@ -203,7 +213,7 @@ func (s *SQLiteStore) GetClientConnections(ctx context.Context, clientID string,
 	}
 	defer rows.Close()
 
-	var conns []Connection
+	conns := make([]Connection, 0)
 	for rows.Next() {
 		var c Connection
 		var connAt, disconnAt *string

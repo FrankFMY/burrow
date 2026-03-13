@@ -2,10 +2,14 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
+	embedfs "github.com/FrankFMY/burrow/embed"
 	"github.com/FrankFMY/burrow/internal/server/store"
 	"github.com/FrankFMY/burrow/internal/shared"
 	"github.com/go-chi/chi/v5"
@@ -57,6 +61,11 @@ func (a *API) Router() http.Handler {
 		r.Get("/api/stats", a.handleGetStats)
 		r.Get("/api/config", a.handleGetConfig)
 	})
+
+	r.HandleFunc("/admin", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
+	})
+	r.Handle("/admin/*", a.adminHandler())
 
 	return r
 }
@@ -226,7 +235,12 @@ func (a *API) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		ShortID:   a.config.ShortID,
 		Name:      client.Name,
 	}
-	link, _ := shared.EncodeInvite(invite)
+	link, err := shared.EncodeInvite(invite)
+	if err != nil {
+		slog.Error("encode invite", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"client": client,
@@ -237,6 +251,10 @@ func (a *API) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleRevokeInvite(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := a.store.RevokeClient(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "invite not found"})
+			return
+		}
 		slog.Error("revoke client", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
@@ -272,6 +290,10 @@ func (a *API) handleGetClient(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleRevokeClient(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := a.store.RevokeClient(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "client not found"})
+			return
+		}
 		slog.Error("revoke client", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
@@ -296,6 +318,28 @@ func (a *API) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		"public_key":  a.config.RealityPublicKey,
 		"short_id":    a.config.ShortID,
 		"server_addr": a.serverAddr,
+	})
+}
+
+func (a *API) adminHandler() http.Handler {
+	sub, err := fs.Sub(embedfs.AdminFS, "admin")
+	if err != nil {
+		slog.Error("embed admin fs", "error", err)
+		return http.NotFoundHandler()
+	}
+	fileServer := http.FileServer(http.FS(sub))
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/admin/")
+		if path == "" {
+			path = "index.html"
+		}
+
+		if _, err := fs.Stat(sub, path); err != nil {
+			r.URL.Path = "/admin/index.html"
+		}
+
+		http.StripPrefix("/admin", fileServer).ServeHTTP(w, r)
 	})
 }
 

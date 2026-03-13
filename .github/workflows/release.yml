@@ -20,6 +20,16 @@ jobs:
         with:
           go-version: '1.26'
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build admin dashboard
+        working-directory: web/admin
+        run: |
+          npm ci
+          npm run build
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:

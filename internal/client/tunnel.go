@@ -14,20 +14,28 @@ import (
 	"github.com/sagernet/sing-box/option"
 	singjson "github.com/sagernet/sing/common/json"
 
+	"github.com/FrankFMY/burrow/internal/client/killswitch"
 	"github.com/FrankFMY/burrow/internal/shared"
 )
+
+type TunnelOptions struct {
+	Invite     shared.InviteData
+	KillSwitch bool
+}
 
 type Tunnel struct {
 	instance *box.Box
 	ctx      context.Context
 	cancel   context.CancelFunc
+	ks       killswitch.KillSwitch
+	serverIP string
 }
 
-func NewTunnel(invite shared.InviteData) (*Tunnel, error) {
+func NewTunnel(topts TunnelOptions) (*Tunnel, error) {
 	registryCtx := include.Context(context.Background())
 	ctx, cancel := context.WithCancel(registryCtx)
 
-	opts, err := buildClientOptions(registryCtx, invite)
+	opts, err := buildClientOptions(registryCtx, topts.Invite)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("build client config: %w", err)
@@ -42,18 +50,33 @@ func NewTunnel(invite shared.InviteData) (*Tunnel, error) {
 		return nil, fmt.Errorf("create sing-box instance: %w", err)
 	}
 
-	return &Tunnel{instance: instance, ctx: ctx, cancel: cancel}, nil
+	t := &Tunnel{instance: instance, ctx: ctx, cancel: cancel, serverIP: topts.Invite.Server}
+	if topts.KillSwitch {
+		t.ks = killswitch.New()
+	}
+	return t, nil
 }
 
 func (t *Tunnel) Start() error {
 	if err := t.instance.Start(); err != nil {
 		return fmt.Errorf("start tunnel: %w", err)
 	}
-	slog.Info("tunnel started")
+	slog.Info("tunnel started", "proxy", "127.0.0.1:1080")
+
+	if t.ks != nil {
+		if err := t.ks.Enable("", t.serverIP, "1.1.1.1"); err != nil {
+			slog.Warn("kill switch failed to enable", "error", err)
+		}
+	}
 	return nil
 }
 
 func (t *Tunnel) Close() error {
+	if t.ks != nil && t.ks.IsEnabled() {
+		if err := t.ks.Disable(); err != nil {
+			slog.Warn("kill switch failed to disable", "error", err)
+		}
+	}
 	t.cancel()
 	return t.instance.Close()
 }
@@ -62,6 +85,7 @@ func (t *Tunnel) Wait() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	s := <-sig
+	signal.Stop(sig)
 	slog.Info("received signal", "signal", s)
 }
 

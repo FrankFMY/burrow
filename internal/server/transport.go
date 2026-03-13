@@ -60,6 +60,7 @@ func (t *Transport) Wait() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	s := <-sig
+	signal.Stop(sig)
 	slog.Info("received signal, shutting down", "signal", s)
 }
 

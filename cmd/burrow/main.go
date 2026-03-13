@@ -19,10 +19,8 @@ func main() {
 	switch os.Args[1] {
 	case "connect":
 		cmdConnect(os.Args[2:])
-	case "disconnect":
-		fmt.Println("Not yet implemented (requires daemon mode)")
-	case "status":
-		fmt.Println("Not yet implemented (requires daemon mode)")
+	case "daemon":
+		cmdDaemon(os.Args[2:])
 	case "servers":
 		cmdServers(os.Args[2:])
 	case "version":
@@ -38,6 +36,7 @@ func printUsage() {
 
 Commands:
   connect [invite-link]   Connect to server (invite link or last used)
+  daemon                  Run background daemon (API on 127.0.0.1:9090)
   servers list            List configured servers
   servers add <link>      Add server from invite link
   servers remove <name>   Remove server
@@ -46,17 +45,33 @@ Commands:
 }
 
 func cmdConnect(args []string) {
+	connectFlags := flag.NewFlagSet("connect", flag.ExitOnError)
+	killSwitchFlag := connectFlags.Bool("kill-switch", false, "Enable kill switch (block traffic if tunnel drops)")
+
 	var invite shared.InviteData
 	var err error
 
-	if len(args) > 0 && args[0] != "" {
-		invite, err = shared.DecodeInvite(args[0])
+	var positional []string
+	for _, a := range args {
+		if a == "--kill-switch" || a == "-kill-switch" {
+			*killSwitchFlag = true
+		} else {
+			positional = append(positional, a)
+		}
+	}
+
+	if len(positional) > 0 && positional[0] != "" {
+		invite, err = shared.DecodeInvite(positional[0])
 		if err != nil {
 			slog.Error("invalid invite link", "error", err)
 			os.Exit(1)
 		}
 
-		cfg, _ := client.LoadClientConfig()
+		cfg, loadErr := client.LoadClientConfig()
+		if loadErr != nil {
+			slog.Error("load config", "error", loadErr)
+			os.Exit(1)
+		}
 		cfg.AddServer(invite)
 		cfg.Last = invite.Server
 		client.SaveClientConfig(cfg)
@@ -86,7 +101,10 @@ func cmdConnect(args []string) {
 		"name", name,
 	)
 
-	tunnel, err := client.NewTunnel(invite)
+	tunnel, err := client.NewTunnel(client.TunnelOptions{
+		Invite:     invite,
+		KillSwitch: *killSwitchFlag,
+	})
 	if err != nil {
 		slog.Error("failed to create tunnel", "error", err)
 		os.Exit(1)
@@ -99,6 +117,9 @@ func cmdConnect(args []string) {
 
 	fmt.Printf("Connected to %s via VLESS+Reality\n", name)
 	fmt.Printf("SOCKS5/HTTP proxy: 127.0.0.1:1080\n")
+	if *killSwitchFlag {
+		fmt.Printf("Kill switch: enabled\n")
+	}
 
 	tunnel.Wait()
 
@@ -106,6 +127,25 @@ func cmdConnect(args []string) {
 		slog.Error("error during shutdown", "error", err)
 	}
 	fmt.Println("Disconnected.")
+}
+
+func cmdDaemon(args []string) {
+	addr := "127.0.0.1:9090"
+	if len(args) > 0 {
+		addr = args[0]
+	}
+
+	d, err := client.NewDaemon()
+	if err != nil {
+		slog.Error("failed to create daemon", "error", err)
+		os.Exit(1)
+	}
+
+	slog.Info("starting daemon", "addr", addr)
+	if err := d.Start(addr); err != nil {
+		slog.Error("daemon error", "error", err)
+		os.Exit(1)
+	}
 }
 
 func cmdServers(args []string) {
@@ -143,7 +183,11 @@ func cmdServers(args []string) {
 			slog.Error("invalid invite link", "error", err)
 			os.Exit(1)
 		}
-		cfg, _ := client.LoadClientConfig()
+		cfg, loadErr := client.LoadClientConfig()
+		if loadErr != nil {
+			slog.Error("load config", "error", loadErr)
+			os.Exit(1)
+		}
 		cfg.AddServer(invite)
 		if err := client.SaveClientConfig(cfg); err != nil {
 			slog.Error("save config", "error", err)

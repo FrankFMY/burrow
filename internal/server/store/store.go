@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+var ErrNotFound = errors.New("not found")
 
 type Client struct {
 	ID              string     `json:"id"`
