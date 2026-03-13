@@ -39,9 +39,10 @@ jobs:
               -X github.com/FrankFMY/burrow/internal/shared.Commit=$(git rev-parse --short HEAD)" \
               -o /tmp/burrow-server-new ./cmd/burrow-server
 
-            # Replace binary and restart
+            # Stop, replace binary, start
+            sudo systemctl stop burrow || true
             sudo cp /tmp/burrow-server-new /usr/local/bin/burrow-server
-            sudo systemctl restart burrow
+            sudo systemctl start burrow
             sleep 2
             curl -sf http://127.0.0.1:9080/health || exit 1
             echo "Deploy successful"
