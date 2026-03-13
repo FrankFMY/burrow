@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -221,11 +222,17 @@ func (s *SQLiteStore) GetClientConnections(ctx context.Context, clientID string,
 			return nil, err
 		}
 		if connAt != nil {
-			t, _ := time.Parse(time.RFC3339, *connAt)
+			t, err := time.Parse(time.RFC3339, *connAt)
+			if err != nil {
+				slog.Warn("parse connected_at time", "value", *connAt, "error", err)
+			}
 			c.ConnectedAt = t
 		}
 		if disconnAt != nil {
-			t, _ := time.Parse(time.RFC3339, *disconnAt)
+			t, err := time.Parse(time.RFC3339, *disconnAt)
+			if err != nil {
+				slog.Warn("parse disconnected_at time", "value", *disconnAt, "error", err)
+			}
 			c.DisconnectedAt = &t
 		}
 		conns = append(conns, c)
@@ -284,15 +291,24 @@ func scanClientFields(scan func(dest ...any) error) (*Client, error) {
 
 	c.Revoked = revoked != 0
 	if createdAt != nil {
-		t, _ := time.Parse(time.RFC3339, *createdAt)
+		t, err := time.Parse(time.RFC3339, *createdAt)
+		if err != nil {
+			slog.Warn("parse created_at time", "value", *createdAt, "error", err)
+		}
 		c.CreatedAt = t
 	}
 	if expiresAt != nil {
-		t, _ := time.Parse(time.RFC3339, *expiresAt)
+		t, err := time.Parse(time.RFC3339, *expiresAt)
+		if err != nil {
+			slog.Warn("parse expires_at time", "value", *expiresAt, "error", err)
+		}
 		c.ExpiresAt = &t
 	}
 	if lastConn != nil {
-		t, _ := time.Parse(time.RFC3339, *lastConn)
+		t, err := time.Parse(time.RFC3339, *lastConn)
+		if err != nil {
+			slog.Warn("parse last_connected_at time", "value", *lastConn, "error", err)
+		}
 		c.LastConnectedAt = &t
 	}
 	if lastProto != nil {

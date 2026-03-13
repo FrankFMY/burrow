@@ -162,7 +162,11 @@ func cmdInvite(args []string) {
 			ShortID:   cfg.ShortID,
 			Name:      *name,
 		}
-		link, _ := shared.EncodeInvite(invite)
+		link, err := shared.EncodeInvite(invite)
+		if err != nil {
+			slog.Error("failed to encode invite", "error", err)
+			os.Exit(1)
+		}
 		fmt.Printf("Invite created for %q:\n  %s\n", *name, link)
 
 	case "list":

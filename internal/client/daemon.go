@@ -55,8 +55,11 @@ func (d *Daemon) Start(addr string) error {
 	mux.HandleFunc("PUT /api/preferences", d.handleSetPreferences)
 
 	d.server = &http.Server{
-		Addr:    addr,
-		Handler: corsWrap(mux),
+		Addr:         addr,
+		Handler:      corsWrap(mux),
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	slog.Info("client daemon listening", "addr", addr)
@@ -192,6 +195,7 @@ func (d *Daemon) reconnectLoop(opts TunnelOptions, stopCh <-chan struct{}, done 
 		d.reconnecting = false
 		d.reconnectAttempt = 0
 		d.lastError = ""
+		d.reconnectDone = nil
 		d.mu.Unlock()
 
 		slog.Info("reconnect successful", "attempt", attempt)
@@ -294,15 +298,16 @@ func (d *Daemon) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	d.mu.Lock()
-	defer d.mu.Unlock()
 
 	if d.tunnel != nil || d.reconnecting {
+		d.mu.Unlock()
 		writeJSONResponse(w, http.StatusConflict, map[string]string{"error": "already connected"})
 		return
 	}
 
 	cfg, err := LoadClientConfig()
 	if err != nil {
+		d.mu.Unlock()
 		writeErrorResponse(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -315,6 +320,7 @@ func (d *Daemon) handleConnect(w http.ResponseWriter, r *http.Request) {
 		entry = cfg.GetLastServer()
 	}
 	if entry == nil {
+		d.mu.Unlock()
 		writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "no server found"})
 		return
 	}
@@ -324,6 +330,7 @@ func (d *Daemon) handleConnect(w http.ResponseWriter, r *http.Request) {
 		KillSwitch: req.KillSwitch,
 		TUNMode:    req.TUNMode,
 	}
+	d.mu.Unlock()
 
 	tunnel, err := NewTunnel(opts)
 	if err != nil {
@@ -334,6 +341,15 @@ func (d *Daemon) handleConnect(w http.ResponseWriter, r *http.Request) {
 	if err := tunnel.Start(); err != nil {
 		tunnel.Close()
 		writeErrorResponse(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.tunnel != nil || d.reconnecting {
+		tunnel.Close()
+		writeJSONResponse(w, http.StatusConflict, map[string]string{"error": "already connected"})
 		return
 	}
 

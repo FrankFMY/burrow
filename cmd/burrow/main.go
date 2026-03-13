@@ -77,7 +77,9 @@ func cmdConnect(args []string) {
 		}
 		cfg.AddServer(invite)
 		cfg.Last = invite.Server
-		client.SaveClientConfig(cfg)
+		if err := client.SaveClientConfig(cfg); err != nil {
+			slog.Warn("save config", "error", err)
+		}
 	} else {
 		cfg, err := client.LoadClientConfig()
 		if err != nil {

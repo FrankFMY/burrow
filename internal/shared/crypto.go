@@ -88,7 +88,9 @@ func GenerateSelfSignedCert(certPath, keyPath string) error {
 		return fmt.Errorf("create cert file: %w", err)
 	}
 	defer certFile.Close()
-	pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	if err := pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		return fmt.Errorf("encode certificate PEM: %w", err)
+	}
 
 	keyDER, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
@@ -100,7 +102,9 @@ func GenerateSelfSignedCert(certPath, keyPath string) error {
 		return fmt.Errorf("create key file: %w", err)
 	}
 	defer keyFile.Close()
-	pem.Encode(keyFile, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	if err := pem.Encode(keyFile, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}); err != nil {
+		return fmt.Errorf("encode private key PEM: %w", err)
+	}
 
 	return nil
 }

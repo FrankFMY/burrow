@@ -81,7 +81,12 @@ func SaveClientConfig(cfg *ClientConfig) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(ConfigPath(), data, 0600)
+	path := ConfigPath()
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func (cfg *ClientConfig) AddServer(invite shared.InviteData) {
