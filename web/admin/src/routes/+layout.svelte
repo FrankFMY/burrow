@@ -3,22 +3,35 @@
 	import { isAuthenticated, clearToken } from '$lib/api';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 
 	let { children } = $props();
 	let menuOpen = $state(false);
+	let authed = $state(false);
 
 	const isLogin = $derived(page.url.pathname.endsWith('/login'));
-	const authed = $derived(isAuthenticated());
+
+	function syncAuth() {
+		authed = isAuthenticated();
+	}
 
 	onMount(() => {
+		syncAuth();
+		window.addEventListener('storage', syncAuth);
 		if (!authed && !isLogin) {
 			goto('/admin/login');
 		}
 	});
 
+	onDestroy(() => {
+		if (typeof window !== 'undefined') {
+			window.removeEventListener('storage', syncAuth);
+		}
+	});
+
 	function logout() {
 		clearToken();
+		authed = false;
 		window.location.href = '/admin/login';
 	}
 

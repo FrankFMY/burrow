@@ -27,6 +27,7 @@ let _prevTimestamp = 0;
 let _pollInterval: ReturnType<typeof setInterval> | null = null;
 let _pollFailures = 0;
 let _initialized = false;
+let _initPromise: Promise<void> | null = null;
 
 export const store = {
 	get status() {
@@ -154,6 +155,12 @@ export const store = {
 	},
 
 	async init() {
+		if (_initPromise) return _initPromise;
+		_initPromise = this._doInit();
+		return _initPromise;
+	},
+
+	async _doInit() {
 		if (_initialized) return;
 		_initialized = true;
 
@@ -183,5 +190,6 @@ export const store = {
 		}
 		_pollFailures = 0;
 		_initialized = false;
+		_initPromise = null;
 	}
 };
