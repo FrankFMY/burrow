@@ -40,7 +40,7 @@ type ServerEntry struct {
 	AddedAt  time.Time         `json:"added_at"`
 }
 
-func ConfigDir() string {
+var ConfigDir = func() string {
 	switch runtime.GOOS {
 	case "darwin":
 		home, _ := os.UserHomeDir()
@@ -53,7 +53,7 @@ func ConfigDir() string {
 	}
 }
 
-func ConfigPath() string {
+var ConfigPath = func() string {
 	return filepath.Join(ConfigDir(), "config.json")
 }
 
