@@ -25,6 +25,8 @@ func main() {
 		cmdRelay(os.Args[2:])
 	case "invite":
 		cmdInvite(os.Args[2:])
+	case "rotate-keys":
+		cmdRotateKeys(os.Args[2:])
 	case "version":
 		fmt.Printf("burrow-server %s (%s) built %s\n", shared.Version, shared.Commit, shared.BuildDate)
 	default:
@@ -37,11 +39,12 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `Usage: burrow-server <command> [flags]
 
 Commands:
-  init      Initialize server configuration
-  run       Start the server
-  relay     Run as a TCP relay/bridge to upstream server
-  invite    Manage client invites
-  version   Print version information
+  init         Initialize server configuration
+  run          Start the server
+  relay        Run as a TCP relay/bridge to upstream server
+  invite       Manage client invites
+  rotate-keys  Rotate JWT secret and Reality keys
+  version      Print version information
 `)
 }
 
@@ -123,6 +126,8 @@ func cmdRun(args []string) {
 		slog.Error("failed to create server", "error", err)
 		os.Exit(1)
 	}
+
+	srv.SetConfigPath(*configPath)
 
 	if err := srv.Start(); err != nil {
 		slog.Error("failed to start server", "error", err)
@@ -237,4 +242,36 @@ func cmdInvite(args []string) {
 		fmt.Fprintf(os.Stderr, "Unknown invite command: %s\n", args[0])
 		os.Exit(1)
 	}
+}
+
+func cmdRotateKeys(args []string) {
+	fs := flag.NewFlagSet("rotate-keys", flag.ExitOnError)
+	configPath := fs.String("config", server.DefaultConfigPath(), "Config file path")
+	fs.Parse(args)
+
+	cfg, err := server.LoadConfig(*configPath)
+	if err != nil {
+		slog.Error("failed to load config", "error", err)
+		os.Exit(1)
+	}
+
+	oldPubKey := cfg.RealityPublicKey
+
+	result, err := server.RotateKeys(cfg)
+	if err != nil {
+		slog.Error("failed to rotate keys", "error", err)
+		os.Exit(1)
+	}
+
+	if err := server.SaveConfig(*configPath, cfg); err != nil {
+		slog.Error("failed to save config", "error", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Keys rotated successfully.\n")
+	fmt.Printf("  Old public key: %s (saved to legacy_public_keys)\n", oldPubKey)
+	fmt.Printf("  New public key: %s\n", result.PublicKey)
+	fmt.Printf("  New short_id:   %s\n", result.ShortID)
+	fmt.Printf("  JWT secret:     regenerated (all existing tokens invalidated)\n")
+	fmt.Printf("\nRestart the server to apply changes:\n  burrow-server run --config %s\n", *configPath)
 }

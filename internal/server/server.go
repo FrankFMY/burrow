@@ -52,6 +52,10 @@ func New(cfg *ServerConfig) (*Server, error) {
 	}, nil
 }
 
+func (s *Server) SetConfigPath(path string) {
+	s.api.SetConfigPath(path)
+}
+
 func (s *Server) Start() error {
 	slog.Info("starting burrow server",
 		"port", s.config.ListenPort,

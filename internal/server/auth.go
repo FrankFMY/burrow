@@ -27,6 +27,10 @@ func NewAuth(secret []byte) *Auth {
 	return &Auth{jwtSecret: secret}
 }
 
+func (a *Auth) UpdateSecret(secret []byte) {
+	a.jwtSecret = secret
+}
+
 func HashPassword(password string) (string, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), BcryptCost)
 	if err != nil {

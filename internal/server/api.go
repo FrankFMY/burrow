@@ -22,6 +22,7 @@ type API struct {
 	store      store.Store
 	auth       *Auth
 	config     *ServerConfig
+	configPath string
 	serverAddr string
 	loginRL    *loginRateLimiter
 }
@@ -36,6 +37,10 @@ func NewAPI(s store.Store, auth *Auth, cfg *ServerConfig, serverAddr string) *AP
 		serverAddr: serverAddr,
 		loginRL:    rl,
 	}
+}
+
+func (a *API) SetConfigPath(path string) {
+	a.configPath = path
 }
 
 func (a *API) Router() http.Handler {
@@ -63,6 +68,7 @@ func (a *API) Router() http.Handler {
 
 		r.Get("/api/stats", a.handleGetStats)
 		r.Get("/api/config", a.handleGetConfig)
+		r.Post("/api/rotate-keys", a.handleRotateKeys)
 	})
 
 	r.HandleFunc("/admin", func(w http.ResponseWriter, r *http.Request) {
@@ -369,6 +375,36 @@ func (a *API) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		"public_key":  a.config.RealityPublicKey,
 		"short_id":    a.config.ShortID,
 		"server_addr": a.serverAddr,
+	})
+}
+
+func (a *API) handleRotateKeys(w http.ResponseWriter, r *http.Request) {
+	if a.configPath == "" {
+		slog.Error("rotate keys: config path not set")
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "config path not configured"})
+		return
+	}
+
+	result, err := RotateKeys(a.config)
+	if err != nil {
+		slog.Error("rotate keys", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate new keys"})
+		return
+	}
+
+	if err := SaveConfig(a.configPath, a.config); err != nil {
+		slog.Error("save config after key rotation", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save config"})
+		return
+	}
+
+	a.auth.UpdateSecret([]byte(a.config.JWTSecret))
+
+	slog.Info("keys rotated", "public_key", result.PublicKey, "short_id", result.ShortID)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":     "rotated",
+		"public_key": result.PublicKey,
+		"short_id":   result.ShortID,
 	})
 }
 

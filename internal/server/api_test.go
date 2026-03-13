@@ -566,6 +566,159 @@ func TestLoginInvalidBody(t *testing.T) {
 	}
 }
 
+func TestRotateKeysRequiresAuth(t *testing.T) {
+	api, _, _ := setupTestAPI(t)
+	router := api.Router()
+
+	rec := doRequest(t, router, "POST", "/api/rotate-keys", nil, "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status: got %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestRotateKeysNoConfigPath(t *testing.T) {
+	api, auth, _ := setupTestAPI(t)
+	router := api.Router()
+	token := authToken(t, auth)
+
+	rec := doRequest(t, router, "POST", "/api/rotate-keys", nil, token)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status: got %d, want %d, body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+
+	var resp map[string]string
+	decodeJSON(t, rec, &resp)
+	if resp["error"] != "config path not configured" {
+		t.Errorf("error: got %q, want %q", resp["error"], "config path not configured")
+	}
+}
+
+func TestRotateKeysSuccess(t *testing.T) {
+	api, auth, _ := setupTestAPI(t)
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	if err := SaveConfig(cfgPath, api.config); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	api.SetConfigPath(cfgPath)
+
+	router := api.Router()
+	token := authToken(t, auth)
+
+	oldPubKey := api.config.RealityPublicKey
+	oldShortID := api.config.ShortID
+	oldJWTSecret := api.config.JWTSecret
+
+	rec := doRequest(t, router, "POST", "/api/rotate-keys", nil, token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp map[string]any
+	decodeJSON(t, rec, &resp)
+	if resp["status"] != "rotated" {
+		t.Errorf("status: got %v, want %q", resp["status"], "rotated")
+	}
+	if resp["public_key"] == nil || resp["public_key"] == "" {
+		t.Error("response should contain new public_key")
+	}
+	if resp["short_id"] == nil || resp["short_id"] == "" {
+		t.Error("response should contain new short_id")
+	}
+
+	if api.config.RealityPublicKey == oldPubKey {
+		t.Error("public key should have changed")
+	}
+	if api.config.ShortID == oldShortID {
+		t.Error("short_id should have changed")
+	}
+	if api.config.JWTSecret == oldJWTSecret {
+		t.Error("JWT secret should have changed")
+	}
+
+	if len(api.config.LegacyPublicKeys) != 1 {
+		t.Fatalf("legacy_public_keys: got %d, want 1", len(api.config.LegacyPublicKeys))
+	}
+	if api.config.LegacyPublicKeys[0] != oldPubKey {
+		t.Errorf("legacy_public_keys[0]: got %q, want %q", api.config.LegacyPublicKeys[0], oldPubKey)
+	}
+
+	loaded, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if loaded.RealityPublicKey != api.config.RealityPublicKey {
+		t.Error("saved config public key should match in-memory config")
+	}
+	if len(loaded.LegacyPublicKeys) != 1 {
+		t.Errorf("saved legacy_public_keys: got %d, want 1", len(loaded.LegacyPublicKeys))
+	}
+}
+
+func TestRotateKeysInvalidatesOldTokens(t *testing.T) {
+	api, auth, _ := setupTestAPI(t)
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	if err := SaveConfig(cfgPath, api.config); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	api.SetConfigPath(cfgPath)
+
+	router := api.Router()
+	oldToken := authToken(t, auth)
+
+	rec := doRequest(t, router, "POST", "/api/rotate-keys", nil, oldToken)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rotate status: got %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	rec = doRequest(t, router, "GET", "/api/config", nil, oldToken)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("old token should be invalid after rotation, got status %d", rec.Code)
+	}
+}
+
+func TestRotateKeysMultipleTimes(t *testing.T) {
+	api, auth, _ := setupTestAPI(t)
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	if err := SaveConfig(cfgPath, api.config); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	api.SetConfigPath(cfgPath)
+
+	router := api.Router()
+	firstPubKey := api.config.RealityPublicKey
+
+	token := authToken(t, auth)
+	rec := doRequest(t, router, "POST", "/api/rotate-keys", nil, token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first rotation status: got %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	secondPubKey := api.config.RealityPublicKey
+
+	newAuth := NewAuth([]byte(api.config.JWTSecret))
+	token2 := authToken(t, newAuth)
+	rec = doRequest(t, router, "POST", "/api/rotate-keys", nil, token2)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second rotation status: got %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	if len(api.config.LegacyPublicKeys) != 2 {
+		t.Fatalf("legacy_public_keys: got %d, want 2", len(api.config.LegacyPublicKeys))
+	}
+	if api.config.LegacyPublicKeys[0] != firstPubKey {
+		t.Errorf("legacy[0]: got %q, want %q", api.config.LegacyPublicKeys[0], firstPubKey)
+	}
+	if api.config.LegacyPublicKeys[1] != secondPubKey {
+		t.Errorf("legacy[1]: got %q, want %q", api.config.LegacyPublicKeys[1], secondPubKey)
+	}
+}
+
 func TestConnectExpiredClient(t *testing.T) {
 	api, _, db := setupTestAPI(t)
 	router := api.Router()
