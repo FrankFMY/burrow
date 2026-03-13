@@ -1,27 +1,21 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { getPreferences, setPreferences, type Preferences } from '$lib/api';
+	import { store } from '$lib/stores.svelte';
+	import { i18n, t } from '$lib/i18n.svelte';
 
 	let version = $state('');
 	let configDir = $state('');
 	let loading = $state(true);
-	let tunMode = $state(true);
-	let killSwitch = $state(false);
-	let autoConnect = $state(false);
 
 	onMount(async () => {
+		await store.init();
+
 		try {
-			const [verRes, prefs] = await Promise.all([
-				fetch('http://127.0.0.1:9090/api/version').then(r => r.json()).catch(() => ({})),
-				getPreferences().catch(() => null)
-			]);
+			const verRes = await fetch('http://127.0.0.1:9090/api/version')
+				.then((r) => r.json())
+				.catch(() => ({}));
 			version = verRes.version || 'unknown';
 			configDir = verRes.config_dir || '';
-			if (prefs) {
-				tunMode = prefs.tun_mode;
-				killSwitch = prefs.kill_switch;
-				autoConnect = prefs.auto_connect;
-			}
 		} catch {
 			version = 'daemon not running';
 		} finally {
@@ -30,18 +24,15 @@
 	});
 
 	async function toggleTunMode() {
-		tunMode = !tunMode;
-		await setPreferences({ tun_mode: tunMode }).catch(() => {});
+		await store.updatePreference({ tun_mode: !store.preferences.tun_mode });
 	}
 
 	async function toggleKillSwitch() {
-		killSwitch = !killSwitch;
-		await setPreferences({ kill_switch: killSwitch }).catch(() => {});
+		await store.updatePreference({ kill_switch: !store.preferences.kill_switch });
 	}
 
 	async function toggleAutoConnect() {
-		autoConnect = !autoConnect;
-		await setPreferences({ auto_connect: autoConnect }).catch(() => {});
+		await store.updatePreference({ auto_connect: !store.preferences.auto_connect });
 	}
 </script>
 
@@ -82,15 +73,15 @@
 							</svg>
 							VPN Mode
 						</div>
-						<div class="text-xs text-[var(--text-secondary)] mt-0.5">{tunMode ? 'All traffic through VPN' : 'Manual proxy (SOCKS5/HTTP)'}</div>
+						<div class="text-xs text-[var(--text-secondary)] mt-0.5">{store.preferences.tun_mode ? 'All traffic through VPN' : 'Manual proxy (SOCKS5/HTTP)'}</div>
 					</div>
 					<div
 						class="w-12 h-7 rounded-full transition-all duration-200 relative shrink-0"
-						class:bg-[var(--accent)]={tunMode}
-						class:shadow-[0_0_12px_var(--accent-glow)]={tunMode}
-						class:bg-[var(--border)]={!tunMode}
+						class:bg-[var(--accent)]={store.preferences.tun_mode}
+						class:shadow-[0_0_12px_var(--accent-glow)]={store.preferences.tun_mode}
+						class:bg-[var(--border)]={!store.preferences.tun_mode}
 					>
-						<div class="w-5 h-5 bg-white rounded-full absolute top-1 transition-transform duration-200 shadow-sm" class:translate-x-6={tunMode} class:translate-x-1={!tunMode}></div>
+						<div class="w-5 h-5 bg-white rounded-full absolute top-1 transition-transform duration-200 shadow-sm" class:translate-x-6={store.preferences.tun_mode} class:translate-x-1={!store.preferences.tun_mode}></div>
 					</div>
 				</button>
 
@@ -109,11 +100,11 @@
 					</div>
 					<div
 						class="w-12 h-7 rounded-full transition-all duration-200 relative shrink-0"
-						class:bg-[var(--accent)]={killSwitch}
-						class:shadow-[0_0_12px_var(--accent-glow)]={killSwitch}
-						class:bg-[var(--border)]={!killSwitch}
+						class:bg-[var(--accent)]={store.preferences.kill_switch}
+						class:shadow-[0_0_12px_var(--accent-glow)]={store.preferences.kill_switch}
+						class:bg-[var(--border)]={!store.preferences.kill_switch}
 					>
-						<div class="w-5 h-5 bg-white rounded-full absolute top-1 transition-transform duration-200 shadow-sm" class:translate-x-6={killSwitch} class:translate-x-1={!killSwitch}></div>
+						<div class="w-5 h-5 bg-white rounded-full absolute top-1 transition-transform duration-200 shadow-sm" class:translate-x-6={store.preferences.kill_switch} class:translate-x-1={!store.preferences.kill_switch}></div>
 					</div>
 				</button>
 
@@ -132,18 +123,18 @@
 					</div>
 					<div
 						class="w-12 h-7 rounded-full transition-all duration-200 relative shrink-0"
-						class:bg-[var(--accent)]={autoConnect}
-						class:shadow-[0_0_12px_var(--accent-glow)]={autoConnect}
-						class:bg-[var(--border)]={!autoConnect}
+						class:bg-[var(--accent)]={store.preferences.auto_connect}
+						class:shadow-[0_0_12px_var(--accent-glow)]={store.preferences.auto_connect}
+						class:bg-[var(--border)]={!store.preferences.auto_connect}
 					>
-						<div class="w-5 h-5 bg-white rounded-full absolute top-1 transition-transform duration-200 shadow-sm" class:translate-x-6={autoConnect} class:translate-x-1={!autoConnect}></div>
+						<div class="w-5 h-5 bg-white rounded-full absolute top-1 transition-transform duration-200 shadow-sm" class:translate-x-6={store.preferences.auto_connect} class:translate-x-1={!store.preferences.auto_connect}></div>
 					</div>
 				</button>
 			</div>
 		</div>
 
 		<!-- Advanced: Proxy info (only relevant when TUN mode is off) -->
-		{#if !tunMode}
+		{#if !store.preferences.tun_mode}
 			<div class="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4 md:p-6 animate-in" style="animation-delay: 0.05s; animation-fill-mode: both">
 				<h3 class="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wider mb-4 flex items-center gap-2">
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
@@ -167,22 +158,42 @@
 			</div>
 		{/if}
 
+		<!-- Language -->
+		<div class="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4 md:p-6 animate-in" style="animation-delay: 0.08s; animation-fill-mode: both">
+			<h3 class="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wider mb-4 flex items-center gap-2">
+				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 016-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 01-3.827-5.802" />
+				</svg>
+				{t('settings.language')}
+			</h3>
+			<div class="flex gap-2">
+				{#each i18n.locales as loc}
+					<button
+						onclick={() => i18n.locale = loc.code}
+						class="px-4 py-2 rounded-lg text-sm font-medium transition-all cursor-pointer {i18n.locale === loc.code ? 'bg-[var(--accent)] text-white shadow-lg shadow-indigo-500/20' : 'bg-[var(--bg-primary)] border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)]/50'}"
+					>
+						{loc.label}
+					</button>
+				{/each}
+			</div>
+		</div>
+
 		<!-- About -->
 		<div class="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4 md:p-6 animate-in" style="animation-delay: 0.1s; animation-fill-mode: both">
 			<h3 class="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wider mb-4 flex items-center gap-2">
 				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
 				</svg>
-				About
+				{t('settings.about')}
 			</h3>
 			<div class="space-y-3">
 				<div class="flex items-center justify-between">
-					<span class="text-sm text-[var(--text-secondary)]">Version</span>
+					<span class="text-sm text-[var(--text-secondary)]">{t('settings.version')}</span>
 					<span class="font-mono text-sm">{version}</span>
 				</div>
 				{#if configDir}
 					<div class="flex items-center justify-between gap-4">
-						<span class="text-sm text-[var(--text-secondary)] shrink-0">Config</span>
+						<span class="text-sm text-[var(--text-secondary)] shrink-0">{t('settings.config')}</span>
 						<span class="font-mono text-xs text-[var(--text-secondary)] truncate">{configDir}</span>
 					</div>
 				{/if}

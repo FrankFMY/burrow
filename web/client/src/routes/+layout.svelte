@@ -1,14 +1,15 @@
 <script lang="ts">
 	import '../app.css';
 	import { page } from '$app/state';
+	import { t } from '$lib/i18n.svelte';
 
 	let { children } = $props();
 	let menuOpen = $state(false);
 
 	const links = [
-		{ href: '/', label: 'Connect', icon: 'M13 10V3L4 14h7v7l9-11h-7z', match: (p: string) => p === '/' },
-		{ href: '/servers', label: 'Servers', icon: 'M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2', match: (p: string) => p.startsWith('/servers') },
-		{ href: '/settings', label: 'Settings', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z', match: (p: string) => p.startsWith('/settings') },
+		{ href: '/', labelKey: 'nav.connect', icon: 'M13 10V3L4 14h7v7l9-11h-7z', match: (p: string) => p === '/' },
+		{ href: '/servers', labelKey: 'nav.servers', icon: 'M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2', match: (p: string) => p.startsWith('/servers') },
+		{ href: '/settings', labelKey: 'nav.settings', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z', match: (p: string) => p.startsWith('/settings') },
 	];
 </script>
 
@@ -19,6 +20,7 @@
 </svelte:head>
 
 <div class="min-h-screen flex flex-col">
+	{#if !page.url.pathname.startsWith('/onboarding')}
 	<!-- Header -->
 	<header class="border-b border-[var(--border)] px-4 md:px-6 py-3 md:py-4 flex items-center justify-between bg-[var(--bg-secondary)]/80 backdrop-blur-xl sticky top-0 z-50">
 		<div class="flex items-center gap-2.5">
@@ -38,7 +40,7 @@
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
 						<path stroke-linecap="round" stroke-linejoin="round" d={link.icon} />
 					</svg>
-					{link.label}
+					{t(link.labelKey)}
 				</a>
 			{/each}
 		</nav>
@@ -73,10 +75,11 @@
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
 						<path stroke-linecap="round" stroke-linejoin="round" d={link.icon} />
 					</svg>
-					{link.label}
+					{t(link.labelKey)}
 				</a>
 			{/each}
 		</div>
+	{/if}
 	{/if}
 
 	<main class="flex-1 p-4 md:p-6 max-w-2xl mx-auto w-full animate-in">

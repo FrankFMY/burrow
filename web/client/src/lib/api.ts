@@ -11,6 +11,9 @@ export interface Server {
 
 export interface TunnelStatus {
 	running: boolean;
+	reconnecting: boolean;
+	reconnect_attempt: number;
+	last_error: string;
 	server: string;
 	protocol: string;
 	uptime: number;

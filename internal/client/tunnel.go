@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
@@ -96,6 +98,18 @@ func (t *Tunnel) Close() error {
 	}
 	t.cancel()
 	return t.instance.Close()
+}
+
+func (t *Tunnel) Healthy() bool {
+	if t.ctx.Err() != nil {
+		return false
+	}
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:1080", 2*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 func (t *Tunnel) Wait() {

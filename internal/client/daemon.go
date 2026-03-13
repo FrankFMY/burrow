@@ -5,18 +5,30 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/FrankFMY/burrow/internal/shared"
 )
 
+const (
+	healthCheckInterval = 5 * time.Second
+	maxReconnectDelay   = 30 * time.Second
+	maxReconnectAttempt = 10
+)
+
 type Daemon struct {
-	mu        sync.Mutex
-	tunnel    *Tunnel
-	config    *ClientConfig
-	startTime time.Time
-	server    *http.Server
+	mu               sync.Mutex
+	tunnel           *Tunnel
+	config           *ClientConfig
+	startTime        time.Time
+	server           *http.Server
+	reconnecting     bool
+	reconnectAttempt int
+	lastError        string
+	lastTunnelOpts   TunnelOptions
+	stopHealth       chan struct{}
 }
 
 func NewDaemon() (*Daemon, error) {
@@ -51,6 +63,7 @@ func (d *Daemon) Start(addr string) error {
 func (d *Daemon) Stop() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.stopHealthMonitor()
 	if d.tunnel != nil {
 		d.tunnel.Close()
 		d.tunnel = nil
@@ -60,13 +73,167 @@ func (d *Daemon) Stop() {
 	}
 }
 
+func (d *Daemon) startHealthMonitor() {
+	d.stopHealth = make(chan struct{})
+	go d.healthLoop()
+}
+
+func (d *Daemon) stopHealthMonitor() {
+	if d.stopHealth != nil {
+		close(d.stopHealth)
+		d.stopHealth = nil
+	}
+}
+
+func (d *Daemon) healthLoop() {
+	ticker := time.NewTicker(healthCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-d.stopHealth:
+			return
+		case <-ticker.C:
+			d.checkAndReconnect()
+		}
+	}
+}
+
+func (d *Daemon) checkAndReconnect() {
+	d.mu.Lock()
+
+	if d.tunnel == nil || d.reconnecting {
+		d.mu.Unlock()
+		return
+	}
+
+	if d.tunnel.Healthy() {
+		d.mu.Unlock()
+		return
+	}
+
+	slog.Warn("tunnel health check failed, starting reconnect")
+	d.reconnecting = true
+	d.reconnectAttempt = 0
+	opts := d.lastTunnelOpts
+
+	d.tunnel.Close()
+	d.tunnel = nil
+
+	d.mu.Unlock()
+
+	d.reconnectLoop(opts)
+}
+
+func (d *Daemon) reconnectLoop(opts TunnelOptions) {
+	for attempt := 1; attempt <= maxReconnectAttempt; attempt++ {
+		delay := reconnectDelay(attempt)
+		slog.Info("reconnect attempt", "attempt", attempt, "delay", delay)
+
+		select {
+		case <-d.stopHealth:
+			d.mu.Lock()
+			d.reconnecting = false
+			d.mu.Unlock()
+			return
+		case <-time.After(delay):
+		}
+
+		tunnel, err := NewTunnel(opts)
+		if err != nil {
+			d.mu.Lock()
+			d.reconnectAttempt = attempt
+			d.lastError = err.Error()
+			d.mu.Unlock()
+			slog.Warn("reconnect: create tunnel failed", "attempt", attempt, "error", err)
+			continue
+		}
+
+		if err := tunnel.Start(); err != nil {
+			tunnel.Close()
+			d.mu.Lock()
+			d.reconnectAttempt = attempt
+			d.lastError = err.Error()
+			d.mu.Unlock()
+			slog.Warn("reconnect: start tunnel failed", "attempt", attempt, "error", err)
+			continue
+		}
+
+		d.mu.Lock()
+		d.tunnel = tunnel
+		d.startTime = time.Now()
+		d.reconnecting = false
+		d.reconnectAttempt = 0
+		d.lastError = ""
+		d.mu.Unlock()
+
+		slog.Info("reconnect successful", "attempt", attempt)
+		return
+	}
+
+	d.mu.Lock()
+	d.reconnecting = false
+	d.lastError = fmt.Sprintf("reconnect failed after %d attempts", maxReconnectAttempt)
+	d.mu.Unlock()
+
+	slog.Error("all reconnect attempts exhausted")
+}
+
+func reconnectDelay(attempt int) time.Duration {
+	delay := time.Second
+	for i := 1; i < attempt; i++ {
+		delay *= 2
+	}
+	if delay > maxReconnectDelay {
+		delay = maxReconnectDelay
+	}
+	return delay
+}
+
+func friendlyError(err error) (code string, message string) {
+	s := strings.ToLower(err.Error())
+
+	switch {
+	case strings.Contains(s, "permission denied") || strings.Contains(s, "operation not permitted"):
+		return "PERMISSION_DENIED", "Administrator rights required for VPN mode. Run the application as administrator."
+	case strings.Contains(s, "context deadline exceeded") || strings.Contains(s, "i/o timeout"):
+		return "TIMEOUT", "Connection to server timed out. Check your internet connection."
+	case strings.Contains(s, "connection refused"):
+		return "SERVER_UNREACHABLE", "Server is unreachable. It may be down or blocked."
+	case strings.Contains(s, "address already in use"):
+		return "PORT_IN_USE", "Port 1080 is already in use by another application."
+	case strings.Contains(s, "no such host") || strings.Contains(s, "no such device"):
+		return "DNS_ERROR", "Cannot resolve server address. Check your DNS settings."
+	case strings.Contains(s, "certificate") || strings.Contains(s, "tls"):
+		return "TLS_ERROR", "Secure connection failed. Server configuration may have changed."
+	default:
+		short := err.Error()
+		if len(short) > 120 {
+			short = short[:120] + "..."
+		}
+		return "UNKNOWN", "Connection failed: " + short
+	}
+}
+
+func writeErrorResponse(w http.ResponseWriter, status int, err error) {
+	code, message := friendlyError(err)
+	writeJSONResponse(w, status, map[string]string{
+		"error":      message,
+		"error_code": code,
+		"detail":     err.Error(),
+	})
+}
+
 func (d *Daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	if d.tunnel == nil {
 		writeJSONResponse(w, http.StatusOK, map[string]any{
-			"running": false,
+			"running":           false,
+			"reconnecting":      d.reconnecting,
+			"reconnect_attempt": d.reconnectAttempt,
+			"last_error":        d.lastError,
 		})
 		return
 	}
@@ -74,14 +241,17 @@ func (d *Daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 	uptime := int(time.Since(d.startTime).Seconds())
 	bytesUp, bytesDown := d.tunnel.Stats()
 	writeJSONResponse(w, http.StatusOK, map[string]any{
-		"running":     true,
-		"server":      d.tunnel.serverIP,
-		"protocol":    "vless-reality",
-		"uptime":      uptime,
-		"bytes_up":    bytesUp,
-		"bytes_down":  bytesDown,
-		"kill_switch": d.tunnel.ks != nil && d.tunnel.ks.IsEnabled(),
-		"tun_mode":    d.tunnel.tunMode,
+		"running":           true,
+		"reconnecting":      d.reconnecting,
+		"reconnect_attempt": d.reconnectAttempt,
+		"last_error":        d.lastError,
+		"server":            d.tunnel.serverIP,
+		"protocol":          "vless-reality",
+		"uptime":            uptime,
+		"bytes_up":          bytesUp,
+		"bytes_down":        bytesDown,
+		"kill_switch":       d.tunnel.ks != nil && d.tunnel.ks.IsEnabled(),
+		"tun_mode":          d.tunnel.tunMode,
 	})
 }
 
@@ -106,7 +276,7 @@ func (d *Daemon) handleConnect(w http.ResponseWriter, r *http.Request) {
 
 	cfg, err := LoadClientConfig()
 	if err != nil {
-		writeJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeErrorResponse(w, http.StatusInternalServerError, err)
 		return
 	}
 	d.config = cfg
@@ -122,24 +292,31 @@ func (d *Daemon) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tunnel, err := NewTunnel(TunnelOptions{
+	opts := TunnelOptions{
 		Invite:     entry.Invite,
 		KillSwitch: req.KillSwitch,
 		TUNMode:    req.TUNMode,
-	})
+	}
+
+	tunnel, err := NewTunnel(opts)
 	if err != nil {
-		writeJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeErrorResponse(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	if err := tunnel.Start(); err != nil {
 		tunnel.Close()
-		writeJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeErrorResponse(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	d.tunnel = tunnel
 	d.startTime = time.Now()
+	d.lastTunnelOpts = opts
+	d.reconnecting = false
+	d.reconnectAttempt = 0
+	d.lastError = ""
+	d.startHealthMonitor()
 
 	cfg.Last = entry.Invite.Server
 	if err := SaveClientConfig(cfg); err != nil {
@@ -153,6 +330,8 @@ func (d *Daemon) handleDisconnect(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	d.stopHealthMonitor()
+
 	if d.tunnel == nil {
 		writeJSONResponse(w, http.StatusOK, map[string]string{"status": "not connected"})
 		return
@@ -162,6 +341,8 @@ func (d *Daemon) handleDisconnect(w http.ResponseWriter, r *http.Request) {
 		slog.Error("tunnel close", "error", err)
 	}
 	d.tunnel = nil
+	d.reconnecting = false
+	d.reconnectAttempt = 0
 
 	writeJSONResponse(w, http.StatusOK, map[string]string{"status": "disconnected"})
 }
