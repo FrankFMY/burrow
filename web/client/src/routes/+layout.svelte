@@ -2,9 +2,19 @@
 	import '../app.css';
 	import { page } from '$app/state';
 	import { t } from '$lib/i18n.svelte';
+	import { store } from '$lib/stores.svelte';
+	import { onMount, onDestroy } from 'svelte';
 
 	let { children } = $props();
 	let menuOpen = $state(false);
+
+	onMount(() => {
+		store.init();
+	});
+
+	onDestroy(() => {
+		store.destroy();
+	});
 
 	const links = [
 		{ href: '/', labelKey: 'nav.connect', icon: 'M13 10V3L4 14h7v7l9-11h-7z', match: (p: string) => p === '/' },

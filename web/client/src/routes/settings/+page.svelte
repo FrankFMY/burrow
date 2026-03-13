@@ -9,8 +9,6 @@
 	let loading = $state(true);
 
 	onMount(async () => {
-		await store.init();
-
 		try {
 			const verRes = await getVersion();
 			version = verRes.version || 'unknown';

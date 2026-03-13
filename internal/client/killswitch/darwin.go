@@ -7,17 +7,33 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 const pfAnchor = "com.burrow.killswitch"
-const pfRulesPath = "/tmp/burrow-pf-rules.conf"
 
 type DarwinKillSwitch struct {
-	enabled bool
+	enabled     bool
+	pfRulesPath string
 }
 
 func New() KillSwitch {
 	return &DarwinKillSwitch{}
+}
+
+func (k *DarwinKillSwitch) getPFRulesPath() string {
+	if k.pfRulesPath != "" {
+		return k.pfRulesPath
+	}
+	if configDir, err := os.UserConfigDir(); err == nil {
+		dir := filepath.Join(configDir, "burrow")
+		if err := os.MkdirAll(dir, 0700); err == nil {
+			k.pfRulesPath = filepath.Join(dir, "pf-rules.conf")
+			return k.pfRulesPath
+		}
+	}
+	k.pfRulesPath = "/tmp/burrow-pf-rules.conf"
+	return k.pfRulesPath
 }
 
 func (k *DarwinKillSwitch) Enable(tunnelInterface, serverIP, dnsIP string) error {
@@ -35,12 +51,13 @@ pass out to 172.16.0.0/12
 pass out to 192.168.0.0/16
 `, tunnelInterface, serverIP)
 
-	if err := os.WriteFile(pfRulesPath, []byte(rules), 0600); err != nil {
+	rulesPath := k.getPFRulesPath()
+	if err := os.WriteFile(rulesPath, []byte(rules), 0600); err != nil {
 		return fmt.Errorf("write pf rules: %w", err)
 	}
 
 	cmds := [][]string{
-		{"pfctl", "-a", pfAnchor, "-f", pfRulesPath},
+		{"pfctl", "-a", pfAnchor, "-f", rulesPath},
 		{"pfctl", "-e"},
 	}
 
@@ -58,7 +75,8 @@ pass out to 192.168.0.0/16
 
 func (k *DarwinKillSwitch) Disable() error {
 	exec.Command("pfctl", "-a", pfAnchor, "-F", "all").Run()
-	os.Remove(pfRulesPath)
+	rulesPath := k.getPFRulesPath()
+	os.Remove(rulesPath)
 	k.enabled = false
 	slog.Info("kill switch disabled (pf)")
 	return nil

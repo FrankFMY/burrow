@@ -50,7 +50,7 @@
 			success = t('server.added');
 			setTimeout(() => { success = ''; }, 3000);
 			await load();
-			store.refreshStatus();
+			await store.refreshStatus();
 		} catch (e: any) {
 			error = e.message;
 		} finally {
@@ -67,7 +67,7 @@
 		try {
 			await removeServer(name);
 			await load();
-			store.refreshStatus();
+			await store.refreshStatus();
 		} catch (e: any) {
 			error = e.message;
 		}

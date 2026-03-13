@@ -2,7 +2,7 @@
 	import { connect, disconnect, setPreferences, formatBytes, formatDuration, formatSpeed } from '$lib/api';
 	import { store } from '$lib/stores.svelte';
 	import { t } from '$lib/i18n.svelte';
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 
 	const MAX_RECONNECT = 10;
@@ -25,11 +25,6 @@
 		if (store.preferences.auto_connect && !store.connected && store.servers.length > 0) {
 			await handleToggle();
 		}
-	});
-
-	onDestroy(() => {
-		// Don't destroy the store — it stays alive for cross-page sharing.
-		// Polling continues so other pages see fresh data.
 	});
 
 	async function handleToggle() {
@@ -60,7 +55,7 @@
 
 	async function handleSwitchServer() {
 		if (!selectedServer || !store.connected) return;
-		const prevServer = store.status?.server;
+		const prevServerName = store.servers.find(s => s.connected)?.name;
 		store.loading = true;
 		store.error = '';
 		try {
@@ -72,10 +67,12 @@
 			);
 			await store.refreshStatus();
 		} catch (e: any) {
-			if (prevServer) {
+			if (prevServerName) {
 				try {
-					await connect(prevServer, store.preferences.kill_switch, store.preferences.tun_mode);
+					await connect(prevServerName, store.preferences.kill_switch, store.preferences.tun_mode);
 					await store.refreshStatus();
+					store.error = '';
+					return;
 				} catch { /* fallback failed, user is disconnected */ }
 			}
 			store.error = e.message;
