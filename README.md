@@ -75,6 +75,10 @@ VLESS+Reality is the primary protocol. If the direct connection is blocked, the 
 - **Invite-only access** — HMAC-signed invite links, revoke access instantly
 - **CDN/Cloudflare fronting** — VLESS over WebSocket, Cloudflare terminates TLS
 - **Relay/bridge mode** — `burrow-server relay` masks real server IP behind entry node
+- **Secret rotation** — rotate Reality keys, ShortID, and JWT secret via API with legacy key tracking
+- **Config validation** — actionable error messages on invalid config fields at startup
+- **Security hardened** — request size limits, input validation, IP spoofing prevention, connection limits
+- **Docker hardened** — non-root user, healthcheck, resource limits
 - **DNS leak prevention** — all DNS through encrypted tunnel
 - **CI/CD** — automated builds, tests, and deployment via GitHub Actions
 
@@ -142,6 +146,7 @@ POST /api/invites               Create invite
 DELETE /api/invites/:id         Revoke invite
 GET  /api/stats                 Server statistics
 GET  /api/config                Server configuration
+POST /api/rotate-keys           Rotate Reality keys, ShortID, JWT secret
 ```
 
 ### Client Daemon API

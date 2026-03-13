@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.5.0] - 2026-03-13
+
+### Added
+- **Config validation** — actionable error messages on invalid or missing config fields at startup
+- **Secret rotation API** — `POST /api/rotate-keys` regenerates Reality keys, ShortID, and JWT secret with legacy key tracking
+- **UX tooltips** — detailed explanations for all settings, helpful for non-technical users
+- **Edge-case tests** — comprehensive tests for boundary conditions, nil configs, empty lists, and fuzz-like scenarios
+- **Docker hardening** — non-root user, healthcheck, resource limits, .dockerignore
+
+### Security
+- Remove X-Forwarded-For trust (middleware.RealIP) — prevents IP spoofing for rate limiter bypass
+- Add request body size limits (64KB) on all POST endpoints — prevents memory exhaustion
+- Add input length validation: password (128 chars), client name (200 chars)
+- Require HMAC signature on invite verification — reject unsigned invites
+- Relay connection limits: semaphore (1024 max), idle timeout (5min), proper deadline propagation
+- Cap SQL LIMIT to 1000 on connection history queries
+
 ## [0.4.0] - 2026-03-13
 
 ### Added
