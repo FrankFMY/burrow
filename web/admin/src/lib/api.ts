@@ -118,7 +118,7 @@ export async function revokeInvite(id: string): Promise<void> {
 	return request(`/invites/${id}`, { method: 'DELETE' });
 }
 
-export async function getConfig() {
+export async function getConfig(): Promise<Record<string, unknown>> {
 	return request('/config');
 }
 
