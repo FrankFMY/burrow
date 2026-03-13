@@ -122,7 +122,7 @@ func (t *Tunnel) Wait() {
 	slog.Info("received signal", "signal", s)
 }
 
-func buildClientOptions(ctx context.Context, invite shared.InviteData, tunMode bool) (option.Options, error) {
+func buildClientConfigMap(invite shared.InviteData, tunMode bool) map[string]any {
 	inbounds := []any{
 		map[string]any{
 			"type":        "mixed",
@@ -162,7 +162,64 @@ func buildClientOptions(ctx context.Context, invite shared.InviteData, tunMode b
 		})
 	}
 
-	configMap := map[string]any{
+	outbounds := []any{
+		map[string]any{
+			"type":        "vless",
+			"tag":         "vless-out",
+			"server":      invite.Server,
+			"server_port": invite.Port,
+			"uuid":        invite.Token,
+			"tls": map[string]any{
+				"enabled":     true,
+				"server_name": invite.SNI,
+				"utls": map[string]any{
+					"enabled":     true,
+					"fingerprint": "chrome",
+				},
+				"reality": map[string]any{
+					"enabled":    true,
+					"public_key": invite.PublicKey,
+					"short_id":   invite.ShortID,
+				},
+			},
+		},
+	}
+
+	if invite.CDNHost != "" {
+		cdnPort := invite.CDNPort
+		if cdnPort == 0 {
+			cdnPort = 443
+		}
+		cdnPath := invite.CDNPath
+		if cdnPath == "" {
+			cdnPath = "/ws"
+		}
+		outbounds = append(outbounds, map[string]any{
+			"type":        "vless",
+			"tag":         "vless-cdn-out",
+			"server":      invite.CDNHost,
+			"server_port": cdnPort,
+			"uuid":        invite.Token,
+			"tls": map[string]any{
+				"enabled":     true,
+				"server_name": invite.CDNHost,
+			},
+			"transport": map[string]any{
+				"type": "ws",
+				"path": cdnPath,
+				"headers": map[string]any{
+					"Host": invite.CDNHost,
+				},
+			},
+		})
+	}
+
+	outbounds = append(outbounds, map[string]any{
+		"type": "direct",
+		"tag":  "direct-out",
+	})
+
+	return map[string]any{
 		"experimental": map[string]any{
 			"clash_api": map[string]any{},
 		},
@@ -189,38 +246,17 @@ func buildClientOptions(ctx context.Context, invite shared.InviteData, tunMode b
 				},
 			},
 		},
-		"inbounds": inbounds,
-		"outbounds": []any{
-			map[string]any{
-				"type":        "vless",
-				"tag":         "vless-out",
-				"server":      invite.Server,
-				"server_port": invite.Port,
-				"uuid":        invite.Token,
-				"tls": map[string]any{
-					"enabled":     true,
-					"server_name": invite.SNI,
-					"utls": map[string]any{
-						"enabled":     true,
-						"fingerprint": "chrome",
-					},
-					"reality": map[string]any{
-						"enabled":    true,
-						"public_key": invite.PublicKey,
-						"short_id":   invite.ShortID,
-					},
-				},
-			},
-			map[string]any{
-				"type": "direct",
-				"tag":  "direct-out",
-			},
-		},
+		"inbounds":  inbounds,
+		"outbounds": outbounds,
 		"route": map[string]any{
 			"rules": routeRules,
 			"final": "vless-out",
 		},
 	}
+}
+
+func buildClientOptions(ctx context.Context, invite shared.InviteData, tunMode bool) (option.Options, error) {
+	configMap := buildClientConfigMap(invite, tunMode)
 
 	b, err := json.Marshal(configMap)
 	if err != nil {

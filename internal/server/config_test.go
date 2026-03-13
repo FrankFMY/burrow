@@ -92,6 +92,19 @@ func TestGenerateConfig(t *testing.T) {
 	if cfg.WireGuard.PrivateKey == "" {
 		t.Error("wireguard private key should not be empty")
 	}
+
+	if cfg.CDNWebSocket == nil {
+		t.Fatal("cdn_websocket config should not be nil")
+	}
+	if cfg.CDNWebSocket.Enabled {
+		t.Error("cdn_websocket should be disabled by default")
+	}
+	if cfg.CDNWebSocket.Port != 8080 {
+		t.Errorf("cdn_websocket port: got %d, want 8080", cfg.CDNWebSocket.Port)
+	}
+	if cfg.CDNWebSocket.Path != "/ws" {
+		t.Errorf("cdn_websocket path: got %q, want %q", cfg.CDNWebSocket.Path, "/ws")
+	}
 }
 
 func TestGenerateConfigDefaultDataDir(t *testing.T) {
@@ -294,6 +307,54 @@ func TestSaveConfigCreatesDirectory(t *testing.T) {
 
 	if _, err := os.Stat(deepPath); os.IsNotExist(err) {
 		t.Fatal("config file should exist in nested directory")
+	}
+}
+
+func TestSaveAndLoadCDNWebSocketConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "cdn-config.json")
+
+	original := &ServerConfig{
+		ListenPort:        443,
+		APIPort:           8080,
+		CamouflageSNI:     "www.example.com",
+		RealityPublicKey:  "pk",
+		RealityPrivateKey: "sk",
+		ShortID:           "abcd",
+		AdminPasswordHash: "hash",
+		JWTSecret:         "secret",
+		ServerAddr:        "1.2.3.4",
+		DataDir:           dir,
+		CDNWebSocket: &CDNWebSocketConfig{
+			Enabled: true,
+			Port:    8080,
+			Path:    "/ws",
+			Host:    "cdn.example.com",
+		},
+	}
+
+	if err := SaveConfig(cfgPath, original); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	loaded, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if loaded.CDNWebSocket == nil {
+		t.Fatal("cdn_websocket should not be nil after load")
+	}
+	if !loaded.CDNWebSocket.Enabled {
+		t.Error("cdn_websocket should be enabled")
+	}
+	if loaded.CDNWebSocket.Port != 8080 {
+		t.Errorf("cdn_websocket port: got %d, want 8080", loaded.CDNWebSocket.Port)
+	}
+	if loaded.CDNWebSocket.Path != "/ws" {
+		t.Errorf("cdn_websocket path: got %q, want %q", loaded.CDNWebSocket.Path, "/ws")
+	}
+	if loaded.CDNWebSocket.Host != "cdn.example.com" {
+		t.Errorf("cdn_websocket host: got %q, want %q", loaded.CDNWebSocket.Host, "cdn.example.com")
 	}
 }
 

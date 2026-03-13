@@ -31,9 +31,10 @@ type ServerConfig struct {
 	DataDir           string `json:"data_dir"`
 	Users             []User `json:"users"`
 
-	Hysteria2 *Hysteria2Config       `json:"hysteria2,omitempty"`
-	SS2022    *Shadowsocks2022Config `json:"ss2022,omitempty"`
-	WireGuard *WireGuardConfig       `json:"wireguard,omitempty"`
+	Hysteria2    *Hysteria2Config       `json:"hysteria2,omitempty"`
+	SS2022       *Shadowsocks2022Config `json:"ss2022,omitempty"`
+	WireGuard    *WireGuardConfig       `json:"wireguard,omitempty"`
+	CDNWebSocket *CDNWebSocketConfig    `json:"cdn_websocket,omitempty"`
 }
 
 type Hysteria2Config struct {
@@ -56,6 +57,13 @@ type WireGuardConfig struct {
 	Port       uint16 `json:"port"`
 	PrivateKey string `json:"private_key"`
 	PublicKey  string `json:"public_key"`
+}
+
+type CDNWebSocketConfig struct {
+	Enabled bool   `json:"enabled"`
+	Port    uint16 `json:"port"`
+	Path    string `json:"path"`
+	Host    string `json:"host"`
 }
 
 type User struct {
@@ -187,6 +195,11 @@ func GenerateConfig(port, apiPort uint16, sni, password, serverAddr, dataDir str
 			Port:       51820,
 			PrivateKey: wgKeys.PrivateKey,
 			PublicKey:  wgKeys.PublicKey,
+		},
+		CDNWebSocket: &CDNWebSocketConfig{
+			Enabled: false,
+			Port:    8080,
+			Path:    "/ws",
 		},
 	}, nil
 }
