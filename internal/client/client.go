@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -64,6 +65,36 @@ var ConfigPath = func() string {
 	return filepath.Join(ConfigDir(), "config.json")
 }
 
+func (cfg *ClientConfig) Validate() error {
+	var errs []string
+
+	for i, s := range cfg.Servers {
+		prefix := fmt.Sprintf("servers[%d]", i)
+		if s.Name == "" {
+			errs = append(errs, fmt.Sprintf("%s.name is required", prefix))
+		}
+		if s.Invite.Server == "" {
+			errs = append(errs, fmt.Sprintf("%s.invite.server is required", prefix))
+		}
+		if s.Invite.Token == "" {
+			errs = append(errs, fmt.Sprintf("%s.invite.token is required", prefix))
+		}
+	}
+
+	if cfg.SplitTunnel != nil {
+		for i, cidr := range cfg.SplitTunnel.BypassIPs {
+			if _, _, err := net.ParseCIDR(cidr); err != nil {
+				errs = append(errs, fmt.Sprintf("split_tunnel.bypass_ips[%d] %q is not valid CIDR notation", i, cidr))
+			}
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("client config validation failed:\n  - %s", strings.Join(errs, "\n  - "))
+	}
+	return nil
+}
+
 func LoadClientConfig() (*ClientConfig, error) {
 	data, err := os.ReadFile(ConfigPath())
 	if err != nil {
@@ -74,6 +105,9 @@ func LoadClientConfig() (*ClientConfig, error) {
 	}
 	var cfg ClientConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, err
+	}
+	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil

@@ -1,9 +1,12 @@
 package client
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/FrankFMY/burrow/internal/shared"
 )
@@ -279,5 +282,239 @@ func TestLoadClientConfig_CorruptJSON(t *testing.T) {
 	_, err := LoadClientConfig()
 	if err == nil {
 		t.Fatal("expected error for corrupt JSON")
+	}
+}
+
+func TestClientValidate_EmptyConfig(t *testing.T) {
+	cfg := &ClientConfig{}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("empty client config should be valid, got: %v", err)
+	}
+}
+
+func TestClientValidate_ValidServers(t *testing.T) {
+	cfg := &ClientConfig{
+		Servers: []ServerEntry{
+			{
+				Name:    "Server 1",
+				Invite:  shared.InviteData{Server: "1.2.3.4", Token: "tok1"},
+				AddedAt: time.Now(),
+			},
+			{
+				Name:    "Server 2",
+				Invite:  shared.InviteData{Server: "5.6.7.8", Token: "tok2"},
+				AddedAt: time.Now(),
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+}
+
+func TestClientValidate_EmptyServerName(t *testing.T) {
+	cfg := &ClientConfig{
+		Servers: []ServerEntry{
+			{
+				Name:   "",
+				Invite: shared.InviteData{Server: "1.2.3.4", Token: "tok"},
+			},
+		},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for empty server name")
+	}
+	if !strings.Contains(err.Error(), "servers[0].name is required") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestClientValidate_EmptyInviteServer(t *testing.T) {
+	cfg := &ClientConfig{
+		Servers: []ServerEntry{
+			{
+				Name:   "Test",
+				Invite: shared.InviteData{Server: "", Token: "tok"},
+			},
+		},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for empty invite server")
+	}
+	if !strings.Contains(err.Error(), "servers[0].invite.server is required") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestClientValidate_EmptyInviteToken(t *testing.T) {
+	cfg := &ClientConfig{
+		Servers: []ServerEntry{
+			{
+				Name:   "Test",
+				Invite: shared.InviteData{Server: "1.2.3.4", Token: ""},
+			},
+		},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for empty invite token")
+	}
+	if !strings.Contains(err.Error(), "servers[0].invite.token is required") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestClientValidate_MultipleServerErrors(t *testing.T) {
+	cfg := &ClientConfig{
+		Servers: []ServerEntry{
+			{Name: "", Invite: shared.InviteData{Server: "", Token: ""}},
+			{Name: "OK", Invite: shared.InviteData{Server: "1.2.3.4", Token: ""}},
+		},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "servers[0].name") {
+		t.Error("expected servers[0].name error")
+	}
+	if !strings.Contains(msg, "servers[0].invite.server") {
+		t.Error("expected servers[0].invite.server error")
+	}
+	if !strings.Contains(msg, "servers[0].invite.token") {
+		t.Error("expected servers[0].invite.token error")
+	}
+	if !strings.Contains(msg, "servers[1].invite.token") {
+		t.Error("expected servers[1].invite.token error")
+	}
+}
+
+func TestClientValidate_ValidBypassIPs(t *testing.T) {
+	cfg := &ClientConfig{
+		SplitTunnel: &SplitTunnelConfig{
+			Enabled:   true,
+			BypassIPs: []string{"192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected no error for valid CIDR, got: %v", err)
+	}
+}
+
+func TestClientValidate_InvalidBypassIP(t *testing.T) {
+	cfg := &ClientConfig{
+		SplitTunnel: &SplitTunnelConfig{
+			Enabled:   true,
+			BypassIPs: []string{"192.168.0.0/16", "not-a-cidr", "10.0.0.0/8"},
+		},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for invalid CIDR")
+	}
+	if !strings.Contains(err.Error(), "bypass_ips[1]") {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not valid CIDR") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestClientValidate_PlainIPNotCIDR(t *testing.T) {
+	cfg := &ClientConfig{
+		SplitTunnel: &SplitTunnelConfig{
+			BypassIPs: []string{"192.168.1.1"},
+		},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for plain IP without CIDR mask")
+	}
+	if !strings.Contains(err.Error(), "not valid CIDR") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestClientValidate_NilSplitTunnel(t *testing.T) {
+	cfg := &ClientConfig{SplitTunnel: nil}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected no error for nil split tunnel, got: %v", err)
+	}
+}
+
+func TestClientValidate_EmptyBypassIPs(t *testing.T) {
+	cfg := &ClientConfig{
+		SplitTunnel: &SplitTunnelConfig{
+			BypassIPs: []string{},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected no error for empty bypass IPs, got: %v", err)
+	}
+}
+
+func TestLoadClientConfig_ValidationFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir := ConfigDir
+	origConfigPath := ConfigPath
+	t.Cleanup(func() {
+		ConfigDir = origConfigDir
+		ConfigPath = origConfigPath
+	})
+	ConfigDir = func() string { return tmpDir }
+	ConfigPath = func() string { return tmpDir + "/config.json" }
+
+	invalid := &ClientConfig{
+		Servers: []ServerEntry{
+			{Name: "", Invite: shared.InviteData{Server: "", Token: ""}},
+		},
+	}
+	data, _ := json.MarshalIndent(invalid, "", "  ")
+	os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0600)
+
+	_, err := LoadClientConfig()
+	if err == nil {
+		t.Fatal("LoadClientConfig should fail for invalid config")
+	}
+	if !strings.Contains(err.Error(), "validation failed") {
+		t.Errorf("expected validation error, got: %v", err)
+	}
+}
+
+func TestLoadClientConfig_ValidationPassesForValidConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir := ConfigDir
+	origConfigPath := ConfigPath
+	t.Cleanup(func() {
+		ConfigDir = origConfigDir
+		ConfigPath = origConfigPath
+	})
+	ConfigDir = func() string { return tmpDir }
+	ConfigPath = func() string { return tmpDir + "/config.json" }
+
+	valid := &ClientConfig{
+		Servers: []ServerEntry{
+			{
+				Name:    "Test",
+				Invite:  shared.InviteData{Server: "1.2.3.4", Token: "tok"},
+				AddedAt: time.Now(),
+			},
+		},
+		SplitTunnel: &SplitTunnelConfig{
+			BypassIPs: []string{"10.0.0.0/8"},
+		},
+	}
+	data, _ := json.MarshalIndent(valid, "", "  ")
+	os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0600)
+
+	cfg, err := LoadClientConfig()
+	if err != nil {
+		t.Fatalf("expected valid config to load, got: %v", err)
+	}
+	if len(cfg.Servers) != 1 {
+		t.Errorf("expected 1 server, got %d", len(cfg.Servers))
 	}
 }

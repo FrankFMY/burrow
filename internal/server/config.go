@@ -1,10 +1,12 @@
 package server
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/FrankFMY/burrow/internal/shared"
 	"github.com/google/uuid"
@@ -92,6 +94,116 @@ func (c *ServerConfig) DatabasePath() string {
 	return filepath.Join(dir, DatabaseFileName)
 }
 
+func validatePort(name string, port uint16) error {
+	if port == 0 {
+		return fmt.Errorf("%s 0 is invalid (must be 1-65535)", name)
+	}
+	return nil
+}
+
+func (c *ServerConfig) Validate() error {
+	var errs []string
+
+	if err := validatePort("listen_port", c.ListenPort); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := validatePort("api_port", c.APIPort); err != nil {
+		errs = append(errs, err.Error())
+	}
+
+	if c.CamouflageSNI == "" {
+		errs = append(errs, "camouflage_sni is required")
+	}
+
+	if c.RealityPrivateKey == "" {
+		errs = append(errs, "reality_private_key is required")
+	} else if len(c.RealityPrivateKey) != 43 && len(c.RealityPrivateKey) != 44 {
+		errs = append(errs, fmt.Sprintf("reality_private_key length %d is invalid (must be 43-44 chars for Curve25519 base64)", len(c.RealityPrivateKey)))
+	}
+
+	if c.RealityPublicKey == "" {
+		errs = append(errs, "reality_public_key is required")
+	} else if len(c.RealityPublicKey) != 43 && len(c.RealityPublicKey) != 44 {
+		errs = append(errs, fmt.Sprintf("reality_public_key length %d is invalid (must be 43-44 chars for Curve25519 base64)", len(c.RealityPublicKey)))
+	}
+
+	if c.ShortID == "" {
+		errs = append(errs, "short_id is required")
+	} else {
+		if len(c.ShortID) != 8 && len(c.ShortID) != 16 {
+			errs = append(errs, fmt.Sprintf("short_id length %d is invalid (must be 8 or 16 hex chars)", len(c.ShortID)))
+		} else if _, err := hex.DecodeString(c.ShortID); err != nil {
+			errs = append(errs, fmt.Sprintf("short_id %q is not valid hex", c.ShortID))
+		}
+	}
+
+	if c.AdminPasswordHash == "" {
+		errs = append(errs, "admin_password_hash is required")
+	}
+	if c.JWTSecret == "" {
+		errs = append(errs, "jwt_secret is required")
+	}
+	if c.ServerAddr == "" {
+		errs = append(errs, "server_addr is required")
+	}
+
+	if c.Hysteria2 != nil && c.Hysteria2.Enabled {
+		if err := validatePort("hysteria2.port", c.Hysteria2.Port); err != nil {
+			errs = append(errs, err.Error())
+		}
+		if c.Hysteria2.Password == "" {
+			errs = append(errs, "hysteria2.password is required when hysteria2 is enabled")
+		}
+		if c.Hysteria2.CertPath == "" {
+			errs = append(errs, "hysteria2.cert_path is required when hysteria2 is enabled")
+		}
+		if c.Hysteria2.KeyPath == "" {
+			errs = append(errs, "hysteria2.key_path is required when hysteria2 is enabled")
+		}
+	}
+
+	if c.SS2022 != nil && c.SS2022.Enabled {
+		if err := validatePort("ss2022.port", c.SS2022.Port); err != nil {
+			errs = append(errs, err.Error())
+		}
+		if c.SS2022.Method == "" {
+			errs = append(errs, "ss2022.method is required when ss2022 is enabled")
+		}
+		if c.SS2022.Key == "" {
+			errs = append(errs, "ss2022.key is required when ss2022 is enabled")
+		}
+	}
+
+	if c.WireGuard != nil && c.WireGuard.Enabled {
+		if err := validatePort("wireguard.port", c.WireGuard.Port); err != nil {
+			errs = append(errs, err.Error())
+		}
+		if c.WireGuard.PrivateKey == "" {
+			errs = append(errs, "wireguard.private_key is required when wireguard is enabled")
+		}
+		if c.WireGuard.PublicKey == "" {
+			errs = append(errs, "wireguard.public_key is required when wireguard is enabled")
+		}
+	}
+
+	if c.CDNWebSocket != nil && c.CDNWebSocket.Enabled {
+		if err := validatePort("cdn_websocket.port", c.CDNWebSocket.Port); err != nil {
+			errs = append(errs, err.Error())
+		}
+		if c.CDNWebSocket.Path == "" {
+			errs = append(errs, "cdn_websocket.path is required when cdn_websocket is enabled")
+		}
+		if c.CDNWebSocket.Host == "" {
+			errs = append(errs, "cdn_websocket.host is required when cdn_websocket is enabled")
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("config validation failed:\n  - %s", strings.Join(errs, "\n  - "))
+	}
+	return nil
+}
+
 func LoadConfig(path string) (*ServerConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -100,6 +212,9 @@ func LoadConfig(path string) (*ServerConfig, error) {
 	var cfg ServerConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
 	}
 	return &cfg, nil
 }
