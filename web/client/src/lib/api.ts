@@ -1,5 +1,10 @@
 import { t } from './i18n.svelte';
 
+// On desktop, the Go daemon runs as a sidecar on localhost.
+// TODO: On mobile, the daemon sidecar is unavailable. Integrate with the
+// platform VPN API (Android VpnService / iOS NetworkExtension) and expose a
+// local control socket or embed the Go core via gomobile so this base URL
+// still resolves.
 const API_BASE = 'http://127.0.0.1:9090';
 
 const ERROR_MAP: Record<string, string> = {

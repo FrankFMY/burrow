@@ -8,6 +8,11 @@
 	let configDir = $state('');
 	let loading = $state(true);
 
+	// Detect Tauri mobile context: kill switch and TUN mode require native
+	// VPN APIs on mobile (Android VpnService / iOS NetworkExtension) and are
+	// not yet implemented, so we hide those toggles.
+	const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
 	onMount(async () => {
 		try {
 			const verRes = await getVersion();
@@ -62,6 +67,7 @@
 			</h3>
 
 			<div class="space-y-1">
+				{#if !isMobile}
 				<button
 					onclick={toggleTunMode}
 					class="w-full flex items-center justify-between p-3 rounded-lg hover:bg-[var(--bg-card-hover)] transition-colors cursor-pointer"
@@ -107,6 +113,7 @@
 						<div class="w-5 h-5 bg-white rounded-full absolute top-1 transition-transform duration-200 shadow-sm" class:translate-x-6={store.preferences.kill_switch} class:translate-x-1={!store.preferences.kill_switch}></div>
 					</div>
 				</button>
+				{/if}
 
 				<button
 					onclick={toggleAutoConnect}
@@ -133,8 +140,8 @@
 			</div>
 		</div>
 
-		<!-- Advanced: Proxy info (only relevant when TUN mode is off) -->
-		{#if !store.preferences.tun_mode}
+		<!-- Advanced: Proxy info (only relevant when TUN mode is off, desktop only) -->
+		{#if !isMobile && !store.preferences.tun_mode}
 			<div class="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4 md:p-6 animate-in" style="animation-delay: 0.05s; animation-fill-mode: both">
 				<h3 class="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wider mb-4 flex items-center gap-2">
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
