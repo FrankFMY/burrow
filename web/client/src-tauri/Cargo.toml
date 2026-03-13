@@ -1,6 +1,6 @@
 [package]
 name = "burrow"
-version = "0.5.1"
+version = "0.5.2"
 description = "Burrow VPN Client"
 authors = ["FrankFMY"]
 edition = "2021"

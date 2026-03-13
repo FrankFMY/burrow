@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.2] - 2026-03-14
+
+### Added
+- **Prometheus metrics** — `/metrics` endpoint with 8 metrics: client counts, connections, bytes transferred, uptime, goroutines, memory, HTTP request duration histogram. Auto-updates every 15s.
+- **Connection tracker** — real-time per-client traffic accounting. Clients report traffic via `POST /api/heartbeat` (periodic delta) and `POST /api/disconnect` (final bytes). Stale sessions auto-cleaned after 1 hour.
+- **One-command deployment** — `scripts/deploy.sh` takes a fresh Ubuntu/Debian VPS to running Burrow server (binary install, firewall, systemd, auto-IP detection). Docker variant: `scripts/deploy-docker.sh`.
+- **DPI resistance testing** — `scripts/dpi-test.sh` verifies TLS camouflage, active probing resistance, protocol detection, DNS leaks. Go integration tests with `dpi` build tag.
+- **Threat model** — `docs/threat-model.md` documenting adversary capabilities, protocol security properties, and known limitations.
+
+### Fixed
+- SQLite `datetime('now')` → RFC3339 format (`strftime('%Y-%m-%dT%H:%M:%SZ')`) for correct time parsing in `RecordTraffic` and `CloseConnection`
+
 ## [0.5.1] - 2026-03-14
 
 ### Security
