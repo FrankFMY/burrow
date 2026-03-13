@@ -65,7 +65,7 @@ The client uses [sing-box](https://sing-box.sagernet.org/) as the tunnel engine 
 
 ### Server
 - **One-command deploy** with Docker or manual setup
-- **Admin dashboard** — manage clients, create invites, monitor traffic in real-time
+- **Admin dashboard** — manage clients, create invites, monitor traffic in real-time (auto-refresh)
 - **Landing page** — public landing page at your server root
 - **Invite-only access** — generate secure links, revoke access instantly
 - **DNS leak prevention** — all DNS through encrypted tunnel
@@ -75,15 +75,18 @@ The client uses [sing-box](https://sing-box.sagernet.org/) as the tunnel engine 
 - **One-click connect** — big connect button, no configuration needed
 - **VPN mode (TUN)** — routes all system traffic through VPN, no proxy setup required
 - **Proxy mode** — SOCKS5/HTTP on `127.0.0.1:1080` for manual configuration
-- **Kill switch** — blocks all traffic if VPN disconnects (Linux, macOS, Windows)
-- **Auto-reconnect** — detects dead tunnel and reconnects with exponential backoff (up to 10 attempts)
-- **System tray** — hide to tray on close, connect/disconnect from tray menu
-- **Real-time stats** — live upload/download traffic counters and uptime
-- **Auto-connect** — optional automatic connection on app launch
+- **Kill switch** — blocks ALL internet if VPN drops, prevents unprotected browsing
+- **Auto-reconnect** — detects dead tunnel and reconnects with exponential backoff (up to 10 attempts), cancel anytime
+- **Live speed stats** — real-time upload/download speed (KB/s, MB/s) with total traffic counters
+- **Server ping** — latency measurement for each server, color-coded badges
+- **Server switching** — switch servers while connected without manual disconnect
+- **Desktop notifications** — system notifications on connect, disconnect, and errors
+- **System tray** — dynamic menu reflects connection state, tooltip shows status
+- **Auto-connect** — automatic connection on app launch with auto-reconnect on drops
 - **Deep links** — `burrow://invite/...` URLs to add servers from browser
 - **Onboarding** — first-run wizard guides new users through setup
 - **Localization** — English, Russian, Chinese (auto-detected from system locale)
-- **Persistent preferences** — settings saved across sessions
+- **Persistent preferences** — settings saved with visual confirmation
 - **Cross-platform** — Linux, macOS, Windows
 
 ## Architecture
@@ -135,6 +138,7 @@ POST /api/disconnect            Stop VPN tunnel
 GET  /api/servers               List configured servers
 POST /api/servers               Add server from invite link
 DELETE /api/servers/:name       Remove server
+GET  /api/servers/:name/ping   Measure server latency (TCP connect time)
 GET  /api/preferences           Get user preferences (VPN mode, kill switch, auto-connect)
 PUT  /api/preferences           Update preferences
 GET  /api/version               Daemon version and config directory
