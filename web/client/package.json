@@ -7,11 +7,13 @@
 		"dev": "vite dev",
 		"build": "vite build",
 		"preview": "vite preview",
+		"tauri": "tauri",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
 	},
 	"devDependencies": {
+		"@tauri-apps/cli": "^2",
 		"@sveltejs/adapter-auto": "^7.0.0",
 		"@sveltejs/adapter-static": "^3.0.10",
 		"@sveltejs/kit": "^2.50.2",
