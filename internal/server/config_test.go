@@ -438,9 +438,11 @@ func TestRotateKeysSaveAndLoad(t *testing.T) {
 	cfg := &ServerConfig{
 		ListenPort:        443,
 		APIPort:           8080,
+		CamouflageSNI:     "www.microsoft.com",
 		RealityPrivateKey: "old-priv",
 		RealityPublicKey:  "old-pub",
 		ShortID:           "old-sid",
+		AdminPasswordHash: "$2a$12$dummy",
 		JWTSecret:         "old-jwt",
 		ServerAddr:        "1.2.3.4",
 		DataDir:           dir,

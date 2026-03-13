@@ -38,6 +38,7 @@ func setupTestAPI(t *testing.T) (*API, *Auth, *store.SQLiteStore) {
 		ShortID:           "abcd1234",
 		AdminPasswordHash: passwordHash,
 		JWTSecret:         "test-jwt-secret",
+		ServerAddr:        "10.0.0.1",
 	}
 
 	api := NewAPI(db, auth, cfg, "10.0.0.1")
