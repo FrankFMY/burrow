@@ -298,6 +298,92 @@ func TestRecordTrafficRevokedClient(t *testing.T) {
 	}
 }
 
+func TestRecordAudit(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	if err := s.RecordAudit(ctx, "login", "admin", "", "", "192.168.1.1"); err != nil {
+		t.Fatalf("record audit: %v", err)
+	}
+
+	entries, err := s.ListAuditLog(ctx, 10)
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries count: got %d, want 1", len(entries))
+	}
+	if entries[0].Action != "login" {
+		t.Errorf("action: got %q, want %q", entries[0].Action, "login")
+	}
+	if entries[0].Actor != "admin" {
+		t.Errorf("actor: got %q, want %q", entries[0].Actor, "admin")
+	}
+	if entries[0].IP != "192.168.1.1" {
+		t.Errorf("ip: got %q, want %q", entries[0].IP, "192.168.1.1")
+	}
+	if entries[0].Timestamp == "" {
+		t.Error("timestamp should be set")
+	}
+	if entries[0].ID == 0 {
+		t.Error("id should be set")
+	}
+}
+
+func TestListAuditLog(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	s.RecordAudit(ctx, "login", "admin", "", "", "10.0.0.1")
+	s.RecordAudit(ctx, "create_invite", "admin", "alice", "id=abc", "10.0.0.1")
+	s.RecordAudit(ctx, "revoke_client", "admin", "client-1", "", "10.0.0.1")
+
+	entries, err := s.ListAuditLog(ctx, 10)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("entries count: got %d, want 3", len(entries))
+	}
+	if entries[0].Action != "revoke_client" {
+		t.Errorf("first entry should be most recent: got %q", entries[0].Action)
+	}
+	if entries[2].Action != "login" {
+		t.Errorf("last entry should be oldest: got %q", entries[2].Action)
+	}
+	if entries[1].Target != "alice" {
+		t.Errorf("target: got %q, want %q", entries[1].Target, "alice")
+	}
+	if entries[1].Detail != "id=abc" {
+		t.Errorf("detail: got %q, want %q", entries[1].Detail, "id=abc")
+	}
+}
+
+func TestListAuditLogLimit(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	for i := 0; i < 10; i++ {
+		s.RecordAudit(ctx, "login", "admin", "", "", "10.0.0.1")
+	}
+
+	entries, err := s.ListAuditLog(ctx, 3)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Errorf("entries count: got %d, want 3", len(entries))
+	}
+
+	all, err := s.ListAuditLog(ctx, 0)
+	if err != nil {
+		t.Fatalf("list default: %v", err)
+	}
+	if len(all) != 10 {
+		t.Errorf("default limit should return all (up to 50): got %d, want 10", len(all))
+	}
+}
+
 func TestSQLiteFile(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")

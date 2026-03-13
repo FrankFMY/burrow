@@ -1137,3 +1137,55 @@ func TestConnectThenHeartbeatThenDisconnect(t *testing.T) {
 		t.Errorf("bytes_down: got %d, want %d", client.BytesDown, expectedDown)
 	}
 }
+
+func TestAuditLogEndpoint(t *testing.T) {
+	api, auth, _ := setupTestAPI(t)
+	router := api.Router()
+	token := authToken(t, auth)
+
+	rec := doRequest(t, router, "GET", "/api/audit", nil, "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("unauthenticated: got %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+
+	rec = doRequest(t, router, "GET", "/api/audit", nil, token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var entries []store.AuditEntry
+	decodeJSON(t, rec, &entries)
+	if entries == nil {
+		t.Error("response should be an array, not nil")
+	}
+}
+
+func TestAuditRecordedOnInviteCreate(t *testing.T) {
+	api, auth, db := setupTestAPI(t)
+	router := api.Router()
+	token := authToken(t, auth)
+
+	rec := doRequest(t, router, "POST", "/api/invites", map[string]string{"name": "Audit Test"}, token)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create invite: got %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	entries, err := db.ListAuditLog(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+
+	found := false
+	for _, e := range entries {
+		if e.Action == "create_invite" && e.Target == "Audit Test" {
+			found = true
+			if e.Actor != "admin" {
+				t.Errorf("actor: got %q, want %q", e.Actor, "admin")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("audit log should contain create_invite entry for 'Audit Test'")
+	}
+}

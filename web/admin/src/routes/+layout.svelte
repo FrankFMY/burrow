@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import { isAuthenticated, clearAuth } from '$lib/api';
+	import { getActiveServer } from '$lib/servers';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
@@ -8,6 +9,7 @@
 	let { children } = $props();
 	let menuOpen = $state(false);
 	let authed = $state(false);
+	let activeServerName = $state<string | null>(null);
 
 	const isLogin = $derived(page.url.pathname.endsWith('/login'));
 
@@ -16,6 +18,8 @@
 		if (!authed && !isLogin) {
 			goto('/admin/login');
 		}
+		const active = getActiveServer();
+		activeServerName = active?.name ?? null;
 	});
 
 	function logout() {
@@ -26,6 +30,8 @@
 
 	function navClick() {
 		menuOpen = false;
+		const active = getActiveServer();
+		activeServerName = active?.name ?? null;
 	}
 
 	const links = [
@@ -33,6 +39,7 @@
 		{ href: '/admin/clients', label: 'Clients', icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z', match: (p: string) => p.includes('/clients') },
 		{ href: '/admin/invites', label: 'Invites', icon: 'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z', match: (p: string) => p.includes('/invites') },
 		{ href: '/admin/settings', label: 'Settings', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z', match: (p: string) => p.includes('/settings') },
+		{ href: '/admin/servers', label: 'Servers', icon: 'M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-7-4h.01M17 16h.01', match: (p: string) => p.includes('/servers') },
 	];
 </script>
 
@@ -48,7 +55,12 @@
 		<div class="md:hidden flex items-center justify-between bg-[var(--bg-secondary)] border-b border-[var(--border)] px-4 py-3">
 			<div class="flex items-center gap-2.5">
 				<div class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold text-sm shadow-lg shadow-blue-500/20">B</div>
-				<span class="font-semibold text-lg">Burrow</span>
+				<div class="flex flex-col">
+					<span class="font-semibold text-lg leading-tight">Burrow</span>
+					{#if activeServerName}
+						<span class="text-[10px] text-[var(--text-secondary)] leading-tight truncate max-w-[120px]">{activeServerName}</span>
+					{/if}
+				</div>
 			</div>
 			<button
 				onclick={() => menuOpen = !menuOpen}
@@ -94,7 +106,12 @@
 		<nav class="hidden md:flex w-60 bg-[var(--bg-secondary)] border-r border-[var(--border)] p-5 flex-col shrink-0">
 			<div class="flex items-center gap-2.5 mb-8">
 				<div class="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold shadow-lg shadow-blue-500/20">B</div>
-				<span class="font-bold text-lg">Burrow</span>
+				<div class="flex flex-col min-w-0">
+					<span class="font-bold text-lg leading-tight">Burrow</span>
+					{#if activeServerName}
+						<span class="text-[10px] text-[var(--text-secondary)] leading-tight truncate">{activeServerName}</span>
+					{/if}
+				</div>
 			</div>
 			<div class="space-y-1">
 				{#each links as link}

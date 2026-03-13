@@ -53,6 +53,19 @@ type Store interface {
 	GetClientConnections(ctx context.Context, clientID string, limit int) ([]Connection, error)
 
 	GetStats(ctx context.Context) (*Stats, error)
+
+	RecordAudit(ctx context.Context, action, actor, target, detail, ip string) error
+	ListAuditLog(ctx context.Context, limit int) ([]AuditEntry, error)
+}
+
+type AuditEntry struct {
+	ID        int64  `json:"id"`
+	Timestamp string `json:"timestamp"`
+	Action    string `json:"action"`
+	Actor     string `json:"actor"`
+	Target    string `json:"target,omitempty"`
+	Detail    string `json:"detail,omitempty"`
+	IP        string `json:"ip,omitempty"`
 }
 
 type Stats struct {

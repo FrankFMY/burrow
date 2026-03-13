@@ -65,6 +65,16 @@ func (s *SQLiteStore) migrate() error {
 			bytes_down INTEGER NOT NULL DEFAULT 0
 		);
 
+		CREATE TABLE IF NOT EXISTS audit_log (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+			action TEXT NOT NULL,
+			actor TEXT NOT NULL DEFAULT 'admin',
+			target TEXT,
+			detail TEXT,
+			ip TEXT
+		);
+
 		CREATE INDEX IF NOT EXISTS idx_clients_token ON clients(token);
 		CREATE INDEX IF NOT EXISTS idx_connections_client ON connections(client_id);
 	`)
@@ -278,6 +288,38 @@ func (s *SQLiteStore) GetStats(ctx context.Context) (*Stats, error) {
 	}
 
 	return &stats, nil
+}
+
+func (s *SQLiteStore) RecordAudit(ctx context.Context, action, actor, target, detail, ip string) error {
+	_, err := s.db.ExecContext(ctx,
+		"INSERT INTO audit_log (action, actor, target, detail, ip) VALUES (?, ?, ?, ?, ?)",
+		action, actor, target, detail, ip,
+	)
+	return err
+}
+
+func (s *SQLiteStore) ListAuditLog(ctx context.Context, limit int) ([]AuditEntry, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT id, timestamp, action, actor, COALESCE(target, ''), COALESCE(detail, ''), COALESCE(ip, '') FROM audit_log ORDER BY id DESC LIMIT ?",
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	entries := make([]AuditEntry, 0)
+	for rows.Next() {
+		var e AuditEntry
+		if err := rows.Scan(&e.ID, &e.Timestamp, &e.Action, &e.Actor, &e.Target, &e.Detail, &e.IP); err != nil {
+			return nil, err
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
 }
 
 type scanner interface {

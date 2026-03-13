@@ -1,4 +1,12 @@
-const API_BASE = '/api';
+import { getActiveServer } from './servers';
+
+function getApiBase(): string {
+	const active = getActiveServer();
+	if (active?.url) {
+		return `${active.url}/api`;
+	}
+	return '/api';
+}
 
 export interface ServerStats {
 	total_clients: number;
@@ -50,7 +58,7 @@ async function request(path: string, options: RequestInit = {}): Promise<any> {
 		...(options.headers as Record<string, string> || {})
 	};
 
-	const resp = await fetch(`${API_BASE}${path}`, {
+	const resp = await fetch(`${getApiBase()}${path}`, {
 		...options,
 		headers,
 		credentials: 'same-origin'
@@ -68,7 +76,7 @@ async function request(path: string, options: RequestInit = {}): Promise<any> {
 }
 
 export async function login(password: string) {
-	const resp = await fetch(`${API_BASE}/auth/login`, {
+	const resp = await fetch(`${getApiBase()}/auth/login`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ password }),
@@ -113,6 +121,18 @@ export async function revokeInvite(id: string): Promise<void> {
 
 export async function getConfig(): Promise<Record<string, unknown>> {
 	return request('/config');
+}
+
+export async function checkHealth(baseUrl: string): Promise<boolean> {
+	try {
+		const resp = await fetch(`${baseUrl}/health`, {
+			method: 'GET',
+			signal: AbortSignal.timeout(5000),
+		});
+		return resp.ok;
+	} catch {
+		return false;
+	}
 }
 
 export function formatBytes(bytes: number): string {
