@@ -333,7 +333,7 @@ func (d *Daemon) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	d.mu.Unlock()
 
-	tunnel, err := NewTunnel(opts)
+	tunnel, mode, err := NewTunnelWithFallback(opts)
 	if err != nil {
 		writeErrorResponse(w, http.StatusInternalServerError, err)
 		return
@@ -344,6 +344,7 @@ func (d *Daemon) handleConnect(w http.ResponseWriter, r *http.Request) {
 		writeErrorResponse(w, http.StatusInternalServerError, err)
 		return
 	}
+	slog.Info("connected", "transport", mode)
 
 	d.mu.Lock()
 	defer d.mu.Unlock()

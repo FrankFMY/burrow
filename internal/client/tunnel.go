@@ -23,11 +23,19 @@ import (
 	"github.com/FrankFMY/burrow/internal/shared"
 )
 
+type TransportMode string
+
+const (
+	TransportDirect TransportMode = "direct"
+	TransportCDN    TransportMode = "cdn"
+)
+
 type TunnelOptions struct {
 	Invite      shared.InviteData
 	KillSwitch  bool
 	TUNMode     bool
 	SplitTunnel *SplitTunnelConfig
+	Transport   TransportMode
 }
 
 const tunInterfaceName = "utun-burrow"
@@ -43,10 +51,15 @@ type Tunnel struct {
 }
 
 func NewTunnel(topts TunnelOptions) (*Tunnel, error) {
+	transport := topts.Transport
+	if transport == "" {
+		transport = TransportDirect
+	}
+
 	registryCtx := include.Context(context.Background())
 	ctx, cancel := context.WithCancel(registryCtx)
 
-	opts, err := buildClientOptions(registryCtx, topts.Invite, topts.TUNMode, topts.SplitTunnel)
+	opts, err := buildClientOptions(registryCtx, topts.Invite, topts.TUNMode, topts.SplitTunnel, transport)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("build client config: %w", err)
@@ -66,6 +79,53 @@ func NewTunnel(topts TunnelOptions) (*Tunnel, error) {
 		t.ks = killswitch.New()
 	}
 	return t, nil
+}
+
+func probeServer(addr string, port uint16, timeout time.Duration) bool {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", addr, port), timeout)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+func NewTunnelWithFallback(topts TunnelOptions) (*Tunnel, TransportMode, error) {
+	modes := []TransportMode{TransportDirect}
+	if topts.Invite.CDNHost != "" {
+		modes = append(modes, TransportCDN)
+	}
+
+	if topts.Transport != "" {
+		topts.Transport = topts.Transport
+		t, err := NewTunnel(topts)
+		return t, topts.Transport, err
+	}
+
+	if probeServer(topts.Invite.Server, topts.Invite.Port, 5*time.Second) {
+		topts.Transport = TransportDirect
+		t, err := NewTunnel(topts)
+		if err == nil {
+			return t, TransportDirect, nil
+		}
+		slog.Warn("direct transport failed to initialize", "error", err)
+	} else {
+		slog.Info("direct server unreachable, trying fallback", "server", topts.Invite.Server, "port", topts.Invite.Port)
+	}
+
+	if topts.Invite.CDNHost != "" {
+		slog.Info("falling back to CDN transport", "host", topts.Invite.CDNHost)
+		topts.Transport = TransportCDN
+		t, err := NewTunnel(topts)
+		if err == nil {
+			return t, TransportCDN, nil
+		}
+		slog.Warn("CDN transport failed to initialize", "error", err)
+	}
+
+	topts.Transport = TransportDirect
+	t, err := NewTunnel(topts)
+	return t, TransportDirect, err
 }
 
 func (t *Tunnel) Stats() (up, down int64) {
@@ -123,7 +183,12 @@ func (t *Tunnel) Wait() {
 	slog.Info("received signal", "signal", s)
 }
 
-func buildClientConfigMap(invite shared.InviteData, tunMode bool, st *SplitTunnelConfig) map[string]any {
+func buildClientConfigMap(invite shared.InviteData, tunMode bool, st *SplitTunnelConfig, transport ...TransportMode) map[string]any {
+	mode := TransportDirect
+	if len(transport) > 0 && transport[0] != "" {
+		mode = transport[0]
+	}
+
 	inbounds := []any{
 		map[string]any{
 			"type":        "mixed",
@@ -194,30 +259,10 @@ func buildClientConfigMap(invite shared.InviteData, tunMode bool, st *SplitTunne
 		})
 	}
 
-	outbounds := []any{
-		map[string]any{
-			"type":        "vless",
-			"tag":         "vless-out",
-			"server":      invite.Server,
-			"server_port": invite.Port,
-			"uuid":        invite.Token,
-			"tls": map[string]any{
-				"enabled":     true,
-				"server_name": invite.SNI,
-				"utls": map[string]any{
-					"enabled":     true,
-					"fingerprint": "chrome",
-				},
-				"reality": map[string]any{
-					"enabled":    true,
-					"public_key": invite.PublicKey,
-					"short_id":   invite.ShortID,
-				},
-			},
-		},
-	}
+	var outbounds []any
 
-	if invite.CDNHost != "" {
+	switch mode {
+	case TransportCDN:
 		cdnPort := invite.CDNPort
 		if cdnPort == 0 {
 			cdnPort = 443
@@ -226,24 +271,49 @@ func buildClientConfigMap(invite shared.InviteData, tunMode bool, st *SplitTunne
 		if cdnPath == "" {
 			cdnPath = "/ws"
 		}
-		outbounds = append(outbounds, map[string]any{
-			"type":        "vless",
-			"tag":         "vless-cdn-out",
-			"server":      invite.CDNHost,
-			"server_port": cdnPort,
-			"uuid":        invite.Token,
-			"tls": map[string]any{
-				"enabled":     true,
-				"server_name": invite.CDNHost,
-			},
-			"transport": map[string]any{
-				"type": "ws",
-				"path": cdnPath,
-				"headers": map[string]any{
-					"Host": invite.CDNHost,
+		outbounds = []any{
+			map[string]any{
+				"type":        "vless",
+				"tag":         "vless-out",
+				"server":      invite.CDNHost,
+				"server_port": cdnPort,
+				"uuid":        invite.Token,
+				"tls": map[string]any{
+					"enabled":     true,
+					"server_name": invite.CDNHost,
+				},
+				"transport": map[string]any{
+					"type": "ws",
+					"path": cdnPath,
+					"headers": map[string]any{
+						"Host": invite.CDNHost,
+					},
 				},
 			},
-		})
+		}
+	default:
+		outbounds = []any{
+			map[string]any{
+				"type":        "vless",
+				"tag":         "vless-out",
+				"server":      invite.Server,
+				"server_port": invite.Port,
+				"uuid":        invite.Token,
+				"tls": map[string]any{
+					"enabled":     true,
+					"server_name": invite.SNI,
+					"utls": map[string]any{
+						"enabled":     true,
+						"fingerprint": "chrome",
+					},
+					"reality": map[string]any{
+						"enabled":    true,
+						"public_key": invite.PublicKey,
+						"short_id":   invite.ShortID,
+					},
+				},
+			},
+		}
 	}
 
 	outbounds = append(outbounds, map[string]any{
@@ -282,8 +352,8 @@ func buildClientConfigMap(invite shared.InviteData, tunMode bool, st *SplitTunne
 	}
 }
 
-func buildClientOptions(ctx context.Context, invite shared.InviteData, tunMode bool, st *SplitTunnelConfig) (option.Options, error) {
-	configMap := buildClientConfigMap(invite, tunMode, st)
+func buildClientOptions(ctx context.Context, invite shared.InviteData, tunMode bool, st *SplitTunnelConfig, transport TransportMode) (option.Options, error) {
+	configMap := buildClientConfigMap(invite, tunMode, st, transport)
 
 	b, err := json.Marshal(configMap)
 	if err != nil {
