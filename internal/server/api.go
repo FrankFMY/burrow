@@ -94,6 +94,7 @@ func (a *API) Router() http.Handler {
 		r.Get("/api/config", a.handleGetConfig)
 		r.Get("/api/logs", a.handleGetLogs)
 		r.Get("/api/health/detailed", a.handleHealthDetailed)
+		r.Get("/api/audit", a.handleAuditLog)
 		r.Post("/api/rotate-keys", a.handleRotateKeys)
 	})
 
@@ -105,6 +106,16 @@ func (a *API) Router() http.Handler {
 	r.Get("/", a.handleLanding)
 
 	return r
+}
+
+func (a *API) audit(r *http.Request, action, target, detail string) {
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if ip == "" {
+		ip = r.RemoteAddr
+	}
+	if err := a.store.RecordAudit(r.Context(), action, "admin", target, detail, ip); err != nil {
+		slog.Error("record audit", "action", action, "error", err)
+	}
 }
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -175,12 +186,14 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	if !CheckPassword(a.config.AdminPasswordHash, req.Password) {
 		a.loginRL.record(ip)
+		a.audit(r, "login_failed", "", "")
 		time.Sleep(500 * time.Millisecond)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid password"})
 		return
 	}
 
 	a.loginRL.reset(ip)
+	a.audit(r, "login", "", "")
 
 	token, err := a.auth.GenerateToken("admin", 24*time.Hour)
 	if err != nil {
@@ -209,6 +222,7 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleLogout(w http.ResponseWriter, r *http.Request) {
+	a.audit(r, "logout", "", "")
 	if tokenStr, ok := r.Context().Value(tokenKey).(string); ok && tokenStr != "" {
 		a.auth.BlockToken(tokenStr, time.Now().Add(24*time.Hour))
 	}
@@ -349,6 +363,10 @@ func (a *API) handleDisconnect(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "token is required"})
 		return
 	}
+	if req.BytesUp < 0 || req.BytesDown < 0 || req.BytesUp > maxBytesPerReport || req.BytesDown > maxBytesPerReport {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid byte counts"})
+		return
+	}
 
 	if err := a.tracker.RecordDisconnect(r.Context(), req.Token, req.BytesUp, req.BytesDown); err != nil {
 		slog.Error("record disconnect", "error", err)
@@ -372,6 +390,10 @@ func (a *API) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Token == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "token is required"})
+		return
+	}
+	if req.BytesUp < 0 || req.BytesDown < 0 || req.BytesUp > maxBytesPerReport || req.BytesDown > maxBytesPerReport {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid byte counts"})
 		return
 	}
 
@@ -442,6 +464,8 @@ func (a *API) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	a.audit(r, "create_invite", client.Name, "id="+client.ID)
+
 	invite := shared.InviteData{
 		Server:    a.serverAddr,
 		Port:      a.config.ListenPort,
@@ -482,6 +506,7 @@ func (a *API) handleRevokeInvite(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
+	a.audit(r, "revoke_invite", id, "")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }
 
@@ -521,6 +546,7 @@ func (a *API) handleRevokeClient(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
+	a.audit(r, "revoke_client", id, "")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }
 
@@ -565,6 +591,7 @@ func (a *API) handleRotateKeys(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.auth.UpdateSecret([]byte(a.config.JWTSecret))
+	a.audit(r, "rotate_keys", "", "public_key="+result.PublicKey)
 
 	slog.Info("keys rotated", "public_key", result.PublicKey, "short_id", result.ShortID)
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -603,6 +630,32 @@ func (a *API) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, entries)
 }
 
+func (a *API) handleAuditLog(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if q := r.URL.Query().Get("limit"); q != "" {
+		n, err := strconv.Atoi(q)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid limit parameter"})
+			return
+		}
+		limit = n
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	entries, err := a.store.ListAuditLog(r.Context(), limit)
+	if err != nil {
+		slog.Error("list audit log", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
 func (a *API) adminHandler() http.Handler {
 	sub, err := fs.Sub(embedfs.AdminFS, "admin")
 	if err != nil {
@@ -637,12 +690,13 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 const (
-	loginMaxAttempts = 5
-	loginWindow      = time.Minute
-	loginCleanupFreq = 5 * time.Minute
-	maxRequestBody   = 64 * 1024 // 64 KB
-	maxPasswordLen   = 128
-	maxNameLen       = 200
+	loginMaxAttempts  = 5
+	loginWindow       = time.Minute
+	loginCleanupFreq  = 5 * time.Minute
+	maxRequestBody    = 64 * 1024 // 64 KB
+	maxPasswordLen    = 128
+	maxNameLen        = 200
+	maxBytesPerReport = 100 * 1024 * 1024 * 1024 // 100 GB
 )
 
 type loginAttempt struct {

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/FrankFMY/burrow/internal/server/store"
@@ -19,6 +20,7 @@ type Server struct {
 	api         *API
 	httpSrv     *http.Server
 	metricsStop chan struct{}
+	stopOnce    sync.Once
 }
 
 func New(cfg *ServerConfig) (*Server, error) {
@@ -118,8 +120,11 @@ func (s *Server) runMetricsUpdater() {
 
 func (s *Server) Stop() error {
 	slog.Info("stopping burrow server")
-	close(s.metricsStop)
+	s.stopOnce.Do(func() {
+		close(s.metricsStop)
+	})
 	s.api.tracker.Close()
+	close(s.api.loginRL.stop)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

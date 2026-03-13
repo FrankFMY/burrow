@@ -109,9 +109,8 @@ func diagTLS(host string, port uint16, sni string) StepResult {
 		step.Detail = fmt.Sprintf("TLS handshake with %s (SNI=%s) failed: %v", addr, sni, err)
 		return step
 	}
-	conn.Close()
-
 	state := conn.ConnectionState()
+	conn.Close()
 	step.Passed = true
 	step.Latency = elapsed
 	step.Detail = fmt.Sprintf("TLS %s to %s (SNI=%s, cert not verified) (%s)",
