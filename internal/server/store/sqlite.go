@@ -68,7 +68,14 @@ func (s *SQLiteStore) migrate() error {
 		CREATE INDEX IF NOT EXISTS idx_clients_token ON clients(token);
 		CREATE INDEX IF NOT EXISTS idx_connections_client ON connections(client_id);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Add bandwidth_limit column if it doesn't exist (migration for existing databases).
+	_, _ = s.db.Exec(`ALTER TABLE clients ADD COLUMN bandwidth_limit INTEGER NOT NULL DEFAULT 0`)
+
+	return nil
 }
 
 func (s *SQLiteStore) GetConfig(ctx context.Context, key string) (string, error) {
@@ -93,27 +100,27 @@ func (s *SQLiteStore) CreateClient(ctx context.Context, c *Client) error {
 	}
 
 	_, err := s.db.ExecContext(ctx,
-		"INSERT INTO clients (id, name, token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
-		c.ID, c.Name, c.Token, c.CreatedAt.UTC().Format(time.RFC3339), expiresAt,
+		"INSERT INTO clients (id, name, token, created_at, expires_at, bandwidth_limit) VALUES (?, ?, ?, ?, ?, ?)",
+		c.ID, c.Name, c.Token, c.CreatedAt.UTC().Format(time.RFC3339), expiresAt, c.BandwidthLimit,
 	)
 	return err
 }
 
 func (s *SQLiteStore) GetClient(ctx context.Context, id string) (*Client, error) {
 	return s.scanClient(s.db.QueryRowContext(ctx,
-		"SELECT id, name, token, created_at, expires_at, revoked, last_connected_at, last_protocol, bytes_up, bytes_down FROM clients WHERE id = ?", id,
+		"SELECT id, name, token, created_at, expires_at, revoked, last_connected_at, last_protocol, bytes_up, bytes_down, bandwidth_limit FROM clients WHERE id = ?", id,
 	))
 }
 
 func (s *SQLiteStore) GetClientByToken(ctx context.Context, token string) (*Client, error) {
 	return s.scanClient(s.db.QueryRowContext(ctx,
-		"SELECT id, name, token, created_at, expires_at, revoked, last_connected_at, last_protocol, bytes_up, bytes_down FROM clients WHERE token = ? AND revoked = 0", token,
+		"SELECT id, name, token, created_at, expires_at, revoked, last_connected_at, last_protocol, bytes_up, bytes_down, bandwidth_limit FROM clients WHERE token = ? AND revoked = 0", token,
 	))
 }
 
 func (s *SQLiteStore) ListClients(ctx context.Context) ([]Client, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, name, token, created_at, expires_at, revoked, last_connected_at, last_protocol, bytes_up, bytes_down FROM clients ORDER BY created_at DESC",
+		"SELECT id, name, token, created_at, expires_at, revoked, last_connected_at, last_protocol, bytes_up, bytes_down, bandwidth_limit FROM clients ORDER BY created_at DESC",
 	)
 	if err != nil {
 		return nil, err
@@ -287,7 +294,7 @@ func scanClientFields(scan func(dest ...any) error) (*Client, error) {
 	var createdAt, expiresAt, lastConn, lastProto *string
 	var revoked int
 
-	err := scan(&c.ID, &c.Name, &c.Token, &createdAt, &expiresAt, &revoked, &lastConn, &lastProto, &c.BytesUp, &c.BytesDown)
+	err := scan(&c.ID, &c.Name, &c.Token, &createdAt, &expiresAt, &revoked, &lastConn, &lastProto, &c.BytesUp, &c.BytesDown, &c.BandwidthLimit)
 	if err != nil {
 		return nil, err
 	}

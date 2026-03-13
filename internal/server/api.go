@@ -6,6 +6,9 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +28,9 @@ type API struct {
 	configPath string
 	serverAddr string
 	loginRL    *loginRateLimiter
+	logBuffer  *LogBuffer
+	startedAt  time.Time
+	dbPath     string
 }
 
 func NewAPI(s store.Store, auth *Auth, cfg *ServerConfig, serverAddr string) *API {
@@ -36,6 +42,8 @@ func NewAPI(s store.Store, auth *Auth, cfg *ServerConfig, serverAddr string) *AP
 		config:     cfg,
 		serverAddr: serverAddr,
 		loginRL:    rl,
+		startedAt:  time.Now(),
+		dbPath:     cfg.DatabasePath(),
 	}
 }
 
@@ -68,6 +76,8 @@ func (a *API) Router() http.Handler {
 
 		r.Get("/api/stats", a.handleGetStats)
 		r.Get("/api/config", a.handleGetConfig)
+		r.Get("/api/logs", a.handleGetLogs)
+		r.Get("/api/health/detailed", a.handleHealthDetailed)
 		r.Post("/api/rotate-keys", a.handleRotateKeys)
 	})
 
@@ -85,6 +95,41 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "ok",
 		"version": shared.Version,
+	})
+}
+
+func (a *API) handleHealthDetailed(w http.ResponseWriter, r *http.Request) {
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+
+	stats, err := a.store.GetStats(r.Context())
+	if err != nil {
+		slog.Error("get stats for health", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	var dbSizeBytes int64
+	if info, err := os.Stat(a.dbPath); err == nil {
+		dbSizeBytes = info.Size()
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":     "ok",
+		"version":    shared.Version,
+		"uptime_sec": int64(time.Since(a.startedAt).Seconds()),
+		"memory": map[string]uint64{
+			"alloc_bytes":       mem.Alloc,
+			"total_alloc_bytes": mem.TotalAlloc,
+			"sys_bytes":         mem.Sys,
+			"num_gc":            uint64(mem.NumGC),
+		},
+		"goroutines":        runtime.NumGoroutine(),
+		"total_clients":     stats.TotalClients,
+		"active_clients":    stats.ActiveClients,
+		"revoked_clients":   stats.RevokedClients,
+		"total_connections": stats.TotalConnections,
+		"db_size_bytes":     dbSizeBytes,
 	})
 }
 
@@ -168,6 +213,11 @@ func (a *API) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if client.BandwidthLimit > 0 && client.BytesUp+client.BytesDown >= client.BandwidthLimit {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "bandwidth limit exceeded"})
+		return
+	}
+
 	protocols := []map[string]any{
 		{
 			"type":        "vless",
@@ -238,8 +288,9 @@ func (a *API) handleListInvites(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 	var req struct {
-		Name      string `json:"name"`
-		ExpiresIn string `json:"expires_in,omitempty"`
+		Name           string `json:"name"`
+		ExpiresIn      string `json:"expires_in,omitempty"`
+		BandwidthLimit int64  `json:"bandwidth_limit,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
@@ -255,10 +306,11 @@ func (a *API) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := &store.Client{
-		ID:        uuid.New().String(),
-		Name:      req.Name,
-		Token:     uuid.New().String(),
-		CreatedAt: time.Now().UTC(),
+		ID:             uuid.New().String(),
+		Name:           req.Name,
+		Token:          uuid.New().String(),
+		CreatedAt:      time.Now().UTC(),
+		BandwidthLimit: req.BandwidthLimit,
 	}
 
 	if req.ExpiresIn != "" {
@@ -406,6 +458,30 @@ func (a *API) handleRotateKeys(w http.ResponseWriter, r *http.Request) {
 		"public_key": result.PublicKey,
 		"short_id":   result.ShortID,
 	})
+}
+
+func (a *API) handleGetLogs(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if q := r.URL.Query().Get("limit"); q != "" {
+		n, err := strconv.Atoi(q)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid limit parameter"})
+			return
+		}
+		limit = n
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	var entries []LogEntry
+	if a.logBuffer != nil {
+		entries = a.logBuffer.Entries(limit)
+	}
+	if entries == nil {
+		entries = []LogEntry{}
+	}
+	writeJSON(w, http.StatusOK, entries)
 }
 
 func (a *API) adminHandler() http.Handler {

@@ -19,6 +19,7 @@ type Client struct {
 	LastProtocol    string     `json:"last_protocol,omitempty"`
 	BytesUp         int64      `json:"bytes_up"`
 	BytesDown       int64      `json:"bytes_down"`
+	BandwidthLimit  int64      `json:"bandwidth_limit"`
 }
 
 type Connection struct {
