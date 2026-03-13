@@ -139,13 +139,13 @@ func (a *API) handleHealthDetailed(w http.ResponseWriter, r *http.Request) {
 			"sys_bytes":         mem.Sys,
 			"num_gc":            uint64(mem.NumGC),
 		},
-		"goroutines":          runtime.NumGoroutine(),
-		"total_clients":       stats.TotalClients,
-		"active_clients":      stats.ActiveClients,
-		"revoked_clients":     stats.RevokedClients,
-		"total_connections":   stats.TotalConnections,
-		"active_connections":  a.tracker.ActiveSessions(),
-		"db_size_bytes":       dbSizeBytes,
+		"goroutines":         runtime.NumGoroutine(),
+		"total_clients":      stats.TotalClients,
+		"active_clients":     stats.ActiveClients,
+		"revoked_clients":    stats.RevokedClients,
+		"total_connections":  stats.TotalConnections,
+		"active_connections": a.tracker.ActiveSessions(),
+		"db_size_bytes":      dbSizeBytes,
 	})
 }
 

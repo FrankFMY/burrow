@@ -14,13 +14,13 @@ import (
 )
 
 type Metrics struct {
-	clientsTotal       *prometheus.GaugeVec
-	connectionsActive  prometheus.Gauge
-	connectionsTotal   prometheus.Counter
-	bytesTransferred   *prometheus.CounterVec
-	serverUptime       prometheus.Gauge
-	goroutines         prometheus.Gauge
-	memoryAlloc        prometheus.Gauge
+	clientsTotal        *prometheus.GaugeVec
+	connectionsActive   prometheus.Gauge
+	connectionsTotal    prometheus.Counter
+	bytesTransferred    *prometheus.CounterVec
+	serverUptime        prometheus.Gauge
+	goroutines          prometheus.Gauge
+	memoryAlloc         prometheus.Gauge
 	httpRequestDuration *prometheus.HistogramVec
 
 	lastBytesUp   int64
