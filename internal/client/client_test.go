@@ -518,3 +518,133 @@ func TestLoadClientConfig_ValidationPassesForValidConfig(t *testing.T) {
 		t.Errorf("expected 1 server, got %d", len(cfg.Servers))
 	}
 }
+
+func TestGetTUNModeWithNilSplitTunnel(t *testing.T) {
+	cfg := &ClientConfig{
+		SplitTunnel: nil,
+	}
+	if !cfg.GetTUNMode() {
+		t.Error("GetTUNMode should return true when TUNMode is nil, even with nil SplitTunnel")
+	}
+}
+
+func TestConfigWithEmptyServersList(t *testing.T) {
+	cfg := &ClientConfig{
+		Servers: []ServerEntry{},
+	}
+	if len(cfg.Servers) != 0 {
+		t.Errorf("expected 0 servers, got %d", len(cfg.Servers))
+	}
+	s := cfg.GetServer("anything")
+	if s != nil {
+		t.Error("expected nil from GetServer on empty list")
+	}
+	s = cfg.GetLastServer()
+	if s != nil {
+		t.Error("expected nil from GetLastServer on empty list")
+	}
+}
+
+func TestAddServerWithEmptyInviteFields(t *testing.T) {
+	cfg := &ClientConfig{}
+	invite := shared.InviteData{}
+	cfg.AddServer(invite)
+
+	if len(cfg.Servers) != 1 {
+		t.Fatalf("expected 1 server, got %d", len(cfg.Servers))
+	}
+	if cfg.Servers[0].Name != "" {
+		t.Errorf("name should be empty (server addr is empty), got %q", cfg.Servers[0].Name)
+	}
+	if cfg.Servers[0].Invite.Server != "" {
+		t.Errorf("server should be empty, got %q", cfg.Servers[0].Invite.Server)
+	}
+}
+
+func TestAddServerEmptyNameDefaultsToServerAddr(t *testing.T) {
+	cfg := &ClientConfig{}
+	invite := shared.InviteData{
+		Server: "192.168.1.1",
+		Port:   443,
+		Token:  "tok",
+	}
+	cfg.AddServer(invite)
+
+	if cfg.Servers[0].Name != "192.168.1.1" {
+		t.Errorf("expected name to default to server addr %q, got %q", "192.168.1.1", cfg.Servers[0].Name)
+	}
+}
+
+func TestSaveClientConfigToReadOnlyDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	readOnlyDir := filepath.Join(tmpDir, "readonly")
+	if err := os.MkdirAll(readOnlyDir, 0500); err != nil {
+		t.Fatalf("create read-only dir: %v", err)
+	}
+
+	origConfigDir := ConfigDir
+	origConfigPath := ConfigPath
+	t.Cleanup(func() {
+		ConfigDir = origConfigDir
+		ConfigPath = origConfigPath
+		os.Chmod(readOnlyDir, 0700)
+	})
+
+	nestedDir := filepath.Join(readOnlyDir, "subdir")
+	ConfigDir = func() string { return nestedDir }
+	ConfigPath = func() string { return filepath.Join(nestedDir, "config.json") }
+
+	cfg := &ClientConfig{}
+	err := SaveClientConfig(cfg)
+	if err == nil {
+		t.Fatal("expected error when saving to read-only directory")
+	}
+}
+
+func TestSaveAndLoadClientConfigRoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir := ConfigDir
+	origConfigPath := ConfigPath
+	t.Cleanup(func() {
+		ConfigDir = origConfigDir
+		ConfigPath = origConfigPath
+	})
+	ConfigDir = func() string { return tmpDir }
+	ConfigPath = func() string { return filepath.Join(tmpDir, "config.json") }
+
+	cfg := &ClientConfig{
+		KillSwitch:  true,
+		AutoConnect: true,
+		SplitTunnel: &SplitTunnelConfig{
+			Enabled:       true,
+			BypassDomains: []string{},
+			BypassIPs:     []string{},
+		},
+	}
+	cfg.SetTUNMode(false)
+
+	if err := SaveClientConfig(cfg); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	loaded, err := LoadClientConfig()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if loaded.KillSwitch != true {
+		t.Error("expected kill_switch true")
+	}
+	if loaded.AutoConnect != true {
+		t.Error("expected auto_connect true")
+	}
+	if loaded.GetTUNMode() != false {
+		t.Error("expected tun_mode false")
+	}
+	if loaded.SplitTunnel == nil {
+		t.Fatal("expected split tunnel config")
+	}
+	if !loaded.SplitTunnel.Enabled {
+		t.Error("expected split tunnel enabled")
+	}
+}
