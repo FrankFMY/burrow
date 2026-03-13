@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/FrankFMY/burrow/internal/server/store"
+	"github.com/FrankFMY/burrow/internal/shared"
 )
 
 func setupTestAPI(t *testing.T) (*API, *Auth, *store.SQLiteStore) {
@@ -434,6 +435,120 @@ func TestHealthEndpoint(t *testing.T) {
 	decodeJSON(t, rec, &resp)
 	if resp["status"] != "ok" {
 		t.Errorf("health status: got %v, want %q", resp["status"], "ok")
+	}
+}
+
+func TestCreateInviteWithCDNWebSocket(t *testing.T) {
+	api, auth, _ := setupTestAPI(t)
+	api.config.CDNWebSocket = &CDNWebSocketConfig{
+		Enabled: true,
+		Port:    8080,
+		Path:    "/ws",
+		Host:    "cdn.example.com",
+	}
+	router := api.Router()
+	token := authToken(t, auth)
+
+	rec := doRequest(t, router, "POST", "/api/invites", map[string]string{"name": "CDN Client"}, token)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	var resp map[string]any
+	decodeJSON(t, rec, &resp)
+	inviteLink, ok := resp["invite"].(string)
+	if !ok || inviteLink == "" {
+		t.Fatal("response should contain invite link")
+	}
+
+	invite, err := shared.DecodeInvite(inviteLink)
+	if err != nil {
+		t.Fatalf("decode invite: %v", err)
+	}
+	if invite.CDNHost != "cdn.example.com" {
+		t.Errorf("cdn_host: got %q, want %q", invite.CDNHost, "cdn.example.com")
+	}
+	if invite.CDNPort != 443 {
+		t.Errorf("cdn_port: got %d, want 443", invite.CDNPort)
+	}
+	if invite.CDNPath != "/ws" {
+		t.Errorf("cdn_path: got %q, want %q", invite.CDNPath, "/ws")
+	}
+}
+
+func TestConnectWithCDNWebSocket(t *testing.T) {
+	api, _, db := setupTestAPI(t)
+	api.config.CDNWebSocket = &CDNWebSocketConfig{
+		Enabled: true,
+		Port:    8080,
+		Path:    "/ws",
+		Host:    "cdn.example.com",
+	}
+	router := api.Router()
+
+	client := &store.Client{
+		ID:        "cdn-client",
+		Name:      "CDN Client",
+		Token:     "cdn-token-123",
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := db.CreateClient(context.Background(), client); err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	rec := doRequest(t, router, "POST", "/api/connect", map[string]string{"token": "cdn-token-123"}, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp map[string]any
+	decodeJSON(t, rec, &resp)
+	protocols, ok := resp["protocols"].([]any)
+	if !ok {
+		t.Fatal("response should contain protocols")
+	}
+
+	foundCDN := false
+	for _, p := range protocols {
+		proto, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+		if proto["type"] == "vless-ws" {
+			foundCDN = true
+			if proto["cdn_host"] != "cdn.example.com" {
+				t.Errorf("cdn_host: got %v, want %q", proto["cdn_host"], "cdn.example.com")
+			}
+			if proto["cdn_path"] != "/ws" {
+				t.Errorf("cdn_path: got %v, want %q", proto["cdn_path"], "/ws")
+			}
+		}
+	}
+	if !foundCDN {
+		t.Error("protocols should include vless-ws when CDN is enabled")
+	}
+}
+
+func TestCreateInviteWithoutCDNWebSocket(t *testing.T) {
+	api, auth, _ := setupTestAPI(t)
+	router := api.Router()
+	token := authToken(t, auth)
+
+	rec := doRequest(t, router, "POST", "/api/invites", map[string]string{"name": "No CDN Client"}, token)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want %d, body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	var resp map[string]any
+	decodeJSON(t, rec, &resp)
+	inviteLink := resp["invite"].(string)
+
+	invite, err := shared.DecodeInvite(inviteLink)
+	if err != nil {
+		t.Fatalf("decode invite: %v", err)
+	}
+	if invite.CDNHost != "" {
+		t.Errorf("cdn_host should be empty when CDN not enabled, got %q", invite.CDNHost)
 	}
 }
 

@@ -202,6 +202,14 @@ func (a *API) handleConnect(w http.ResponseWriter, r *http.Request) {
 			"public_key":  a.config.WireGuard.PublicKey,
 		})
 	}
+	if a.config.CDNWebSocket != nil && a.config.CDNWebSocket.Enabled && a.config.CDNWebSocket.Host != "" {
+		protocols = append(protocols, map[string]any{
+			"type":     "vless-ws",
+			"cdn_host": a.config.CDNWebSocket.Host,
+			"cdn_port": 443,
+			"cdn_path": a.config.CDNWebSocket.Path,
+		})
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"client_id": client.ID,
@@ -265,6 +273,11 @@ func (a *API) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		PublicKey: a.config.RealityPublicKey,
 		ShortID:   a.config.ShortID,
 		Name:      client.Name,
+	}
+	if a.config.CDNWebSocket != nil && a.config.CDNWebSocket.Enabled && a.config.CDNWebSocket.Host != "" {
+		invite.CDNHost = a.config.CDNWebSocket.Host
+		invite.CDNPort = 443
+		invite.CDNPath = a.config.CDNWebSocket.Path
 	}
 	invite.Sig = shared.SignInvite(invite, a.config.JWTSecret)
 	link, err := shared.EncodeInvite(invite)

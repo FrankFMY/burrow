@@ -52,6 +52,72 @@ func TestEncodeDecodeInvite(t *testing.T) {
 	}
 }
 
+func TestEncodeDecodeInviteWithCDN(t *testing.T) {
+	original := InviteData{
+		Server:    "103.24.55.12",
+		Port:      443,
+		Token:     "550e8400-e29b-41d4-a716-446655440000",
+		SNI:       "www.microsoft.com",
+		PublicKey: "base64-server-reality-public-key",
+		ShortID:   "abcd1234",
+		Name:      "CDN Phone",
+		CDNHost:   "cdn.example.com",
+		CDNPort:   443,
+		CDNPath:   "/ws",
+	}
+
+	link, err := EncodeInvite(original)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	decoded, err := DecodeInvite(link)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if decoded.CDNHost != original.CDNHost {
+		t.Errorf("cdn_host: got %q, want %q", decoded.CDNHost, original.CDNHost)
+	}
+	if decoded.CDNPort != original.CDNPort {
+		t.Errorf("cdn_port: got %d, want %d", decoded.CDNPort, original.CDNPort)
+	}
+	if decoded.CDNPath != original.CDNPath {
+		t.Errorf("cdn_path: got %q, want %q", decoded.CDNPath, original.CDNPath)
+	}
+}
+
+func TestEncodeDecodeInviteWithoutCDN(t *testing.T) {
+	original := InviteData{
+		Server:    "103.24.55.12",
+		Port:      443,
+		Token:     "token-123",
+		SNI:       "www.microsoft.com",
+		PublicKey: "pubkey",
+		ShortID:   "abcd",
+	}
+
+	link, err := EncodeInvite(original)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	decoded, err := DecodeInvite(link)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if decoded.CDNHost != "" {
+		t.Errorf("cdn_host should be empty, got %q", decoded.CDNHost)
+	}
+	if decoded.CDNPort != 0 {
+		t.Errorf("cdn_port should be 0, got %d", decoded.CDNPort)
+	}
+	if decoded.CDNPath != "" {
+		t.Errorf("cdn_path should be empty, got %q", decoded.CDNPath)
+	}
+}
+
 func TestDecodeInviteInvalidScheme(t *testing.T) {
 	_, err := DecodeInvite("https://example.com")
 	if err == nil {

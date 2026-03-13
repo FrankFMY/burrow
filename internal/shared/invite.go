@@ -19,6 +19,9 @@ type InviteData struct {
 	PublicKey string `json:"pk"`
 	ShortID   string `json:"sid"`
 	Name      string `json:"n,omitempty"`
+	CDNHost   string `json:"ch,omitempty"`
+	CDNPort   uint16 `json:"cp,omitempty"`
+	CDNPath   string `json:"cw,omitempty"`
 	Sig       string `json:"sig,omitempty"`
 }
 

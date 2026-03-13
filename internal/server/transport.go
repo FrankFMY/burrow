@@ -86,6 +86,9 @@ func buildSingboxOptions(ctx context.Context, cfg *ServerConfig) (option.Options
 	if cfg.WireGuard != nil && cfg.WireGuard.Enabled {
 		inbounds = append(inbounds, buildWireGuardInbound(cfg))
 	}
+	if cfg.CDNWebSocket != nil && cfg.CDNWebSocket.Enabled {
+		inbounds = append(inbounds, buildVLESSWebSocketInbound(cfg, users))
+	}
 
 	configMap := map[string]any{
 		"log": map[string]any{
@@ -193,6 +196,20 @@ func buildWireGuardInbound(cfg *ServerConfig) map[string]any {
 			{
 				"allowed_ips": []string{"0.0.0.0/0", "::/0"},
 			},
+		},
+	}
+}
+
+func buildVLESSWebSocketInbound(cfg *ServerConfig, users []map[string]string) map[string]any {
+	return map[string]any{
+		"type":        "vless",
+		"tag":         "vless-ws-in",
+		"listen":      "::",
+		"listen_port": cfg.CDNWebSocket.Port,
+		"users":       users,
+		"transport": map[string]any{
+			"type": "ws",
+			"path": cfg.CDNWebSocket.Path,
 		},
 	}
 }

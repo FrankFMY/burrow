@@ -54,6 +54,9 @@ func cmdInit(args []string) {
 	serverAddr := fs.String("server", "", "Server public IP or domain (required)")
 	dataDir := fs.String("data-dir", "/var/lib/burrow", "Data directory for database")
 	configPath := fs.String("config", server.DefaultConfigPath(), "Config file path")
+	cdnHost := fs.String("cdn-host", "", "CDN domain for WebSocket transport (e.g., example.com)")
+	cdnPort := fs.Uint("cdn-port", 8080, "Origin port for CDN WebSocket listener")
+	cdnPath := fs.String("cdn-path", "/ws", "WebSocket path for CDN transport")
 	fs.Parse(args)
 
 	if *password == "" {
@@ -76,6 +79,15 @@ func cmdInit(args []string) {
 		os.Exit(1)
 	}
 
+	if *cdnHost != "" {
+		cfg.CDNWebSocket = &server.CDNWebSocketConfig{
+			Enabled: true,
+			Port:    uint16(*cdnPort),
+			Path:    *cdnPath,
+			Host:    *cdnHost,
+		}
+	}
+
 	if err := server.SaveConfig(*configPath, cfg); err != nil {
 		slog.Error("failed to save config", "error", err)
 		os.Exit(1)
@@ -88,6 +100,9 @@ func cmdInit(args []string) {
 	fmt.Printf("  Camouflage: %s\n", cfg.CamouflageSNI)
 	fmt.Printf("  Public key: %s\n", cfg.RealityPublicKey)
 	fmt.Printf("  Server:     %s\n", cfg.ServerAddr)
+	if cfg.CDNWebSocket != nil && cfg.CDNWebSocket.Enabled {
+		fmt.Printf("  CDN Host:   %s (ws port %d, path %s)\n", cfg.CDNWebSocket.Host, cfg.CDNWebSocket.Port, cfg.CDNWebSocket.Path)
+	}
 	fmt.Printf("\nStart the server:\n  burrow-server run --config %s\n", *configPath)
 	fmt.Printf("\nCreate an invite:\n  burrow-server invite create --config %s --name \"My phone\"\n", *configPath)
 }
@@ -200,6 +215,11 @@ func cmdInvite(args []string) {
 			PublicKey: cfg.RealityPublicKey,
 			ShortID:   cfg.ShortID,
 			Name:      *name,
+		}
+		if cfg.CDNWebSocket != nil && cfg.CDNWebSocket.Enabled && cfg.CDNWebSocket.Host != "" {
+			invite.CDNHost = cfg.CDNWebSocket.Host
+			invite.CDNPort = 443
+			invite.CDNPath = cfg.CDNWebSocket.Path
 		}
 		link, err := shared.EncodeInvite(invite)
 		if err != nil {
