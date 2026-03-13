@@ -24,9 +24,10 @@ import (
 )
 
 type TunnelOptions struct {
-	Invite     shared.InviteData
-	KillSwitch bool
-	TUNMode    bool
+	Invite      shared.InviteData
+	KillSwitch  bool
+	TUNMode     bool
+	SplitTunnel *SplitTunnelConfig
 }
 
 const tunInterfaceName = "utun-burrow"
@@ -45,7 +46,7 @@ func NewTunnel(topts TunnelOptions) (*Tunnel, error) {
 	registryCtx := include.Context(context.Background())
 	ctx, cancel := context.WithCancel(registryCtx)
 
-	opts, err := buildClientOptions(registryCtx, topts.Invite, topts.TUNMode)
+	opts, err := buildClientOptions(registryCtx, topts.Invite, topts.TUNMode, topts.SplitTunnel)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("build client config: %w", err)
@@ -122,7 +123,7 @@ func (t *Tunnel) Wait() {
 	slog.Info("received signal", "signal", s)
 }
 
-func buildClientOptions(ctx context.Context, invite shared.InviteData, tunMode bool) (option.Options, error) {
+func buildClientOptions(ctx context.Context, invite shared.InviteData, tunMode bool, st *SplitTunnelConfig) (option.Options, error) {
 	inbounds := []any{
 		map[string]any{
 			"type":        "mixed",
@@ -162,6 +163,37 @@ func buildClientOptions(ctx context.Context, invite shared.InviteData, tunMode b
 		})
 	}
 
+	if st != nil && st.Enabled {
+		if len(st.BypassDomains) > 0 {
+			routeRules = append(routeRules, map[string]any{
+				"action":        "route",
+				"domain_suffix": st.BypassDomains,
+				"outbound":      "direct-out",
+			})
+		}
+		if len(st.BypassIPs) > 0 {
+			routeRules = append(routeRules, map[string]any{
+				"action":   "route",
+				"ip_cidr":  st.BypassIPs,
+				"outbound": "direct-out",
+			})
+		}
+	}
+
+	dnsRules := []map[string]any{
+		{
+			"outbound": []string{"any"},
+			"server":   "remote-doh",
+		},
+	}
+
+	if st != nil && st.Enabled && len(st.BypassDomains) > 0 {
+		dnsRules = append(dnsRules, map[string]any{
+			"domain_suffix": st.BypassDomains,
+			"server":        "local-dns",
+		})
+	}
+
 	configMap := map[string]any{
 		"experimental": map[string]any{
 			"clash_api": map[string]any{},
@@ -182,12 +214,7 @@ func buildClientOptions(ctx context.Context, invite shared.InviteData, tunMode b
 					"detour":  "direct-out",
 				},
 			},
-			"rules": []map[string]any{
-				{
-					"outbound": []string{"any"},
-					"server":   "remote-doh",
-				},
-			},
+			"rules": dnsRules,
 		},
 		"inbounds": inbounds,
 		"outbounds": []any{

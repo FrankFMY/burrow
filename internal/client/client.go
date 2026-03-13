@@ -14,12 +14,19 @@ import (
 	"github.com/FrankFMY/burrow/internal/shared"
 )
 
+type SplitTunnelConfig struct {
+	Enabled       bool     `json:"enabled"`
+	BypassDomains []string `json:"bypass_domains,omitempty"`
+	BypassIPs     []string `json:"bypass_ips,omitempty"`
+}
+
 type ClientConfig struct {
-	Servers     []ServerEntry `json:"servers"`
-	Last        string        `json:"last,omitempty"`
-	TUNMode     *bool         `json:"tun_mode,omitempty"`
-	KillSwitch  bool          `json:"kill_switch,omitempty"`
-	AutoConnect bool          `json:"auto_connect,omitempty"`
+	Servers     []ServerEntry      `json:"servers"`
+	Last        string             `json:"last,omitempty"`
+	TUNMode     *bool              `json:"tun_mode,omitempty"`
+	KillSwitch  bool               `json:"kill_switch,omitempty"`
+	AutoConnect bool               `json:"auto_connect,omitempty"`
+	SplitTunnel *SplitTunnelConfig `json:"split_tunnel,omitempty"`
 }
 
 func (cfg *ClientConfig) GetTUNMode() bool {

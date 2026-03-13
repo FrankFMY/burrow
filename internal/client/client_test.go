@@ -220,6 +220,53 @@ func TestLoadClientConfig_NotExist(t *testing.T) {
 	}
 }
 
+func TestSplitTunnelConfigPersistence(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigDir := ConfigDir
+	origConfigPath := ConfigPath
+	t.Cleanup(func() {
+		ConfigDir = origConfigDir
+		ConfigPath = origConfigPath
+	})
+	ConfigDir = func() string { return tmpDir }
+	ConfigPath = func() string { return tmpDir + "/config.json" }
+
+	cfg := &ClientConfig{
+		SplitTunnel: &SplitTunnelConfig{
+			Enabled:       true,
+			BypassDomains: []string{"youtube.com", "google.com"},
+			BypassIPs:     []string{"192.168.0.0/16", "10.0.0.0/8"},
+		},
+	}
+	if err := SaveClientConfig(cfg); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	loaded, err := LoadClientConfig()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if loaded.SplitTunnel == nil {
+		t.Fatal("expected split tunnel config")
+	}
+	if !loaded.SplitTunnel.Enabled {
+		t.Error("expected split tunnel enabled")
+	}
+	if len(loaded.SplitTunnel.BypassDomains) != 2 {
+		t.Errorf("expected 2 bypass domains, got %d", len(loaded.SplitTunnel.BypassDomains))
+	}
+	if len(loaded.SplitTunnel.BypassIPs) != 2 {
+		t.Errorf("expected 2 bypass IPs, got %d", len(loaded.SplitTunnel.BypassIPs))
+	}
+}
+
+func TestSplitTunnelNilByDefault(t *testing.T) {
+	cfg := &ClientConfig{}
+	if cfg.SplitTunnel != nil {
+		t.Error("expected nil split tunnel by default")
+	}
+}
+
 func TestLoadClientConfig_CorruptJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	origConfigDir := ConfigDir

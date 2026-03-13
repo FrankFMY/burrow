@@ -31,6 +31,30 @@
 	async function toggleAutoConnect() {
 		await store.updatePreference({ auto_connect: !store.preferences.auto_connect });
 	}
+
+	let splitEnabled = $derived(store.preferences.split_tunnel?.enabled ?? false);
+	let bypassDomainsText = $state('');
+	let bypassIPsText = $state('');
+	let splitInitialized = $state(false);
+
+	$effect(() => {
+		if (store.preferences.split_tunnel && !splitInitialized) {
+			bypassDomainsText = (store.preferences.split_tunnel.bypass_domains ?? []).join('\n');
+			bypassIPsText = (store.preferences.split_tunnel.bypass_ips ?? []).join('\n');
+			splitInitialized = true;
+		}
+	});
+
+	async function toggleSplitTunnel() {
+		const current = store.preferences.split_tunnel ?? { enabled: false, bypass_domains: [], bypass_ips: [] };
+		await store.updatePreference({ split_tunnel: { ...current, enabled: !current.enabled } });
+	}
+
+	async function saveSplitRules() {
+		const bypass_domains = bypassDomainsText.split('\n').map(s => s.trim()).filter(Boolean);
+		const bypass_ips = bypassIPsText.split('\n').map(s => s.trim()).filter(Boolean);
+		await store.updatePreference({ split_tunnel: { enabled: splitEnabled, bypass_domains, bypass_ips } });
+	}
 </script>
 
 <h2 class="text-xl md:text-2xl font-bold mb-4 md:mb-6">{t('settings.title')}</h2>
@@ -131,6 +155,63 @@
 					</div>
 				</button>
 			</div>
+		</div>
+
+		<!-- Split Tunneling -->
+		<div class="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4 md:p-6 animate-in" style="animation-delay: 0.03s; animation-fill-mode: both">
+			<h3 class="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wider mb-4 flex items-center gap-2">
+				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+				</svg>
+				{t('settings.split_tunnel')}
+			</h3>
+
+			<button
+				onclick={toggleSplitTunnel}
+				class="w-full flex items-center justify-between p-3 rounded-lg hover:bg-[var(--bg-card-hover)] transition-colors cursor-pointer mb-2"
+			>
+				<div class="text-left">
+					<div class="text-sm font-medium">{t('settings.split_tunnel_enable')}</div>
+					<div class="text-xs text-[var(--text-secondary)] mt-0.5">{t('settings.split_tunnel_desc')}</div>
+				</div>
+				<div
+					class="w-12 h-7 rounded-full transition-all duration-200 relative shrink-0"
+					class:bg-[var(--accent)]={splitEnabled}
+					class:shadow-[0_0_12px_var(--accent-glow)]={splitEnabled}
+					class:bg-[var(--border)]={!splitEnabled}
+				>
+					<div class="w-5 h-5 bg-white rounded-full absolute top-1 transition-transform duration-200 shadow-sm" class:translate-x-6={splitEnabled} class:translate-x-1={!splitEnabled}></div>
+				</div>
+			</button>
+
+			{#if splitEnabled}
+				<div class="space-y-3 mt-3">
+					<div>
+						<label class="text-xs text-[var(--text-secondary)] block mb-1">{t('settings.bypass_domains')}</label>
+						<textarea
+							bind:value={bypassDomainsText}
+							placeholder="youtube.com&#10;google.com&#10;github.com"
+							rows="4"
+							class="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg p-3 text-sm font-mono resize-none focus:outline-none focus:border-[var(--accent)]"
+						></textarea>
+					</div>
+					<div>
+						<label class="text-xs text-[var(--text-secondary)] block mb-1">{t('settings.bypass_ips')}</label>
+						<textarea
+							bind:value={bypassIPsText}
+							placeholder="192.168.0.0/16&#10;10.0.0.0/8"
+							rows="3"
+							class="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg p-3 text-sm font-mono resize-none focus:outline-none focus:border-[var(--accent)]"
+						></textarea>
+					</div>
+					<button
+						onclick={saveSplitRules}
+						class="w-full py-2.5 rounded-lg text-sm font-medium bg-[var(--accent)] text-white hover:opacity-90 transition-opacity cursor-pointer"
+					>
+						{t('settings.save_rules')}
+					</button>
+				</div>
+			{/if}
 		</div>
 
 		<!-- Advanced: Proxy info (only relevant when TUN mode is off) -->

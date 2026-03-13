@@ -35,10 +35,17 @@ export interface TunnelStatus {
 	tun_mode: boolean;
 }
 
+export interface SplitTunnelConfig {
+	enabled: boolean;
+	bypass_domains?: string[];
+	bypass_ips?: string[];
+}
+
 export interface Preferences {
 	tun_mode: boolean;
 	kill_switch: boolean;
 	auto_connect: boolean;
+	split_tunnel?: SplitTunnelConfig;
 }
 
 async function request(path: string, opts: RequestInit = {}): Promise<any> {
