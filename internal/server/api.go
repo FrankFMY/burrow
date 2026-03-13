@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	embedfs "github.com/FrankFMY/burrow/embed"
@@ -22,14 +23,18 @@ type API struct {
 	auth       *Auth
 	config     *ServerConfig
 	serverAddr string
+	loginRL    *loginRateLimiter
 }
 
 func NewAPI(s store.Store, auth *Auth, cfg *ServerConfig, serverAddr string) *API {
+	rl := newLoginRateLimiter()
+	go rl.cleanup()
 	return &API{
 		store:      s,
 		auth:       auth,
 		config:     cfg,
 		serverAddr: serverAddr,
+		loginRL:    rl,
 	}
 }
 
@@ -37,7 +42,6 @@ func (a *API) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RealIP)
-	r.Use(corsMiddleware)
 
 	r.Get("/health", a.handleHealth)
 
@@ -80,6 +84,17 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
+	ip := r.RemoteAddr
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		ip = strings.SplitN(fwd, ",", 2)[0]
+		ip = strings.TrimSpace(ip)
+	}
+
+	if !a.loginRL.allow(ip) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many login attempts, try again later"})
+		return
+	}
+
 	var req struct {
 		Password string `json:"password"`
 	}
@@ -89,9 +104,13 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !CheckPassword(a.config.AdminPasswordHash, req.Password) {
+		a.loginRL.record(ip)
+		time.Sleep(500 * time.Millisecond)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid password"})
 		return
 	}
+
+	a.loginRL.reset(ip)
 
 	token, err := a.auth.GenerateToken("admin", 24*time.Hour)
 	if err != nil {
@@ -356,15 +375,71 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusNoContent)
-			return
+const (
+	loginMaxAttempts = 5
+	loginWindow      = time.Minute
+	loginCleanupFreq = 5 * time.Minute
+)
+
+type loginAttempt struct {
+	count    int
+	firstAt  time.Time
+}
+
+type loginRateLimiter struct {
+	mu       sync.Mutex
+	attempts map[string]*loginAttempt
+}
+
+func newLoginRateLimiter() *loginRateLimiter {
+	return &loginRateLimiter{
+		attempts: make(map[string]*loginAttempt),
+	}
+}
+
+func (rl *loginRateLimiter) allow(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	a, ok := rl.attempts[ip]
+	if !ok {
+		return true
+	}
+	if time.Since(a.firstAt) > loginWindow {
+		delete(rl.attempts, ip)
+		return true
+	}
+	return a.count < loginMaxAttempts
+}
+
+func (rl *loginRateLimiter) record(ip string) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	a, ok := rl.attempts[ip]
+	if !ok || time.Since(a.firstAt) > loginWindow {
+		rl.attempts[ip] = &loginAttempt{count: 1, firstAt: time.Now()}
+		return
+	}
+	a.count++
+}
+
+func (rl *loginRateLimiter) reset(ip string) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	delete(rl.attempts, ip)
+}
+
+func (rl *loginRateLimiter) cleanup() {
+	for {
+		time.Sleep(loginCleanupFreq)
+		rl.mu.Lock()
+		now := time.Now()
+		for ip, a := range rl.attempts {
+			if now.Sub(a.firstAt) > loginWindow {
+				delete(rl.attempts, ip)
+			}
 		}
-		next.ServeHTTP(w, r)
-	})
+		rl.mu.Unlock()
+	}
 }

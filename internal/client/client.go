@@ -130,8 +130,11 @@ type ConnectResponse struct {
 func FetchConfig(invite shared.InviteData) (*ConnectResponse, error) {
 	apiURL := fmt.Sprintf("http://%s:%d/api/connect", invite.Server, 8080)
 
-	body := fmt.Sprintf(`{"token":"%s"}`, invite.Token)
-	req, err := http.NewRequest("POST", apiURL, strings.NewReader(body))
+	bodyData, err := json.Marshal(map[string]string{"token": invite.Token})
+	if err != nil {
+		return nil, fmt.Errorf("marshal request body: %w", err)
+	}
+	req, err := http.NewRequest("POST", apiURL, strings.NewReader(string(bodyData)))
 	if err != nil {
 		return nil, err
 	}

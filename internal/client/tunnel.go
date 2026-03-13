@@ -29,6 +29,8 @@ type TunnelOptions struct {
 	TUNMode    bool
 }
 
+const tunInterfaceName = "utun-burrow"
+
 type Tunnel struct {
 	instance    *box.Box
 	ctx         context.Context
@@ -83,7 +85,7 @@ func (t *Tunnel) Start() error {
 	slog.Info("tunnel started", "proxy", "127.0.0.1:1080")
 
 	if t.ks != nil {
-		if err := t.ks.Enable("", t.serverIP, "1.1.1.1"); err != nil {
+		if err := t.ks.Enable(tunInterfaceName, t.serverIP, "1.1.1.1"); err != nil {
 			slog.Warn("kill switch failed to enable", "error", err)
 		}
 	}
@@ -134,7 +136,7 @@ func buildClientOptions(ctx context.Context, invite shared.InviteData, tunMode b
 		inbounds = append(inbounds, map[string]any{
 			"type":                       "tun",
 			"tag":                        "tun-in",
-			"interface_name":             "utun-burrow",
+			"interface_name":             tunInterfaceName,
 			"address":                    []string{"172.19.0.1/30", "fdfe:dcba:9876::1/126"},
 			"mtu":                        9000,
 			"auto_route":                 true,

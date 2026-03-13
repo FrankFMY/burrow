@@ -19,42 +19,47 @@ func New() KillSwitch {
 	return &LinuxKillSwitch{}
 }
 
+type iptablesRule struct {
+	binary string
+	args   []string
+}
+
 func (k *LinuxKillSwitch) Enable(tunnelInterface, serverIP, dnsIP string) error {
 	k.Disable()
 
-	commands := []string{
-		fmt.Sprintf("iptables -N %s", iptablesChain),
-		fmt.Sprintf("iptables -A %s -o lo -j ACCEPT", iptablesChain),
-		fmt.Sprintf("iptables -A %s -o %s -j ACCEPT", iptablesChain, tunnelInterface),
-		fmt.Sprintf("iptables -A %s -d %s -j ACCEPT", iptablesChain, serverIP),
-		fmt.Sprintf("iptables -A %s -d 127.0.0.0/8 -j ACCEPT", iptablesChain),
-		fmt.Sprintf("iptables -A %s -d 10.0.0.0/8 -j ACCEPT", iptablesChain),
-		fmt.Sprintf("iptables -A %s -d 172.16.0.0/12 -j ACCEPT", iptablesChain),
-		fmt.Sprintf("iptables -A %s -d 192.168.0.0/16 -j ACCEPT", iptablesChain),
-		fmt.Sprintf("iptables -A %s -p udp --dport 67:68 -j ACCEPT", iptablesChain),
-		fmt.Sprintf("iptables -A %s -j DROP", iptablesChain),
-		fmt.Sprintf("iptables -I OUTPUT 1 -j %s", iptablesChain),
+	commands := []iptablesRule{
+		{"iptables", []string{"-N", iptablesChain}},
+		{"iptables", []string{"-A", iptablesChain, "-o", "lo", "-j", "ACCEPT"}},
+		{"iptables", []string{"-A", iptablesChain, "-o", tunnelInterface, "-j", "ACCEPT"}},
+		{"iptables", []string{"-A", iptablesChain, "-d", serverIP, "-j", "ACCEPT"}},
+		{"iptables", []string{"-A", iptablesChain, "-d", "127.0.0.0/8", "-j", "ACCEPT"}},
+		{"iptables", []string{"-A", iptablesChain, "-d", "10.0.0.0/8", "-j", "ACCEPT"}},
+		{"iptables", []string{"-A", iptablesChain, "-d", "172.16.0.0/12", "-j", "ACCEPT"}},
+		{"iptables", []string{"-A", iptablesChain, "-d", "192.168.0.0/16", "-j", "ACCEPT"}},
+		{"iptables", []string{"-A", iptablesChain, "-p", "udp", "--dport", "67:68", "-j", "ACCEPT"}},
+		{"iptables", []string{"-A", iptablesChain, "-j", "DROP"}},
+		{"iptables", []string{"-I", "OUTPUT", "1", "-j", iptablesChain}},
 	}
 
-	for _, cmd := range commands {
-		if err := runIPTables(cmd); err != nil {
+	for _, rule := range commands {
+		if err := runIPTables(rule); err != nil {
 			k.Disable()
-			return fmt.Errorf("enable kill switch: %w (cmd: %s)", err, cmd)
+			return fmt.Errorf("enable kill switch: %w (cmd: %s %s)", err, rule.binary, strings.Join(rule.args, " "))
 		}
 	}
 
-	ip6Commands := []string{
-		fmt.Sprintf("ip6tables -N %s", iptablesChain),
-		fmt.Sprintf("ip6tables -A %s -o lo -j ACCEPT", iptablesChain),
-		fmt.Sprintf("ip6tables -A %s -o %s -j ACCEPT", iptablesChain, tunnelInterface),
-		fmt.Sprintf("ip6tables -A %s -d ::1/128 -j ACCEPT", iptablesChain),
-		fmt.Sprintf("ip6tables -A %s -j DROP", iptablesChain),
-		fmt.Sprintf("ip6tables -I OUTPUT 1 -j %s", iptablesChain),
+	ip6Commands := []iptablesRule{
+		{"ip6tables", []string{"-N", iptablesChain}},
+		{"ip6tables", []string{"-A", iptablesChain, "-o", "lo", "-j", "ACCEPT"}},
+		{"ip6tables", []string{"-A", iptablesChain, "-o", tunnelInterface, "-j", "ACCEPT"}},
+		{"ip6tables", []string{"-A", iptablesChain, "-d", "::1/128", "-j", "ACCEPT"}},
+		{"ip6tables", []string{"-A", iptablesChain, "-j", "DROP"}},
+		{"ip6tables", []string{"-I", "OUTPUT", "1", "-j", iptablesChain}},
 	}
 
-	for _, cmd := range ip6Commands {
-		if err := runIPTables(cmd); err != nil {
-			slog.Warn("ip6tables command failed (non-fatal)", "cmd", cmd, "error", err)
+	for _, rule := range ip6Commands {
+		if err := runIPTables(rule); err != nil {
+			slog.Warn("ip6tables command failed (non-fatal)", "cmd", rule.binary+" "+strings.Join(rule.args, " "), "error", err)
 		}
 	}
 
@@ -64,17 +69,17 @@ func (k *LinuxKillSwitch) Enable(tunnelInterface, serverIP, dnsIP string) error 
 }
 
 func (k *LinuxKillSwitch) Disable() error {
-	cleanupCommands := []string{
-		fmt.Sprintf("iptables -D OUTPUT -j %s", iptablesChain),
-		fmt.Sprintf("iptables -F %s", iptablesChain),
-		fmt.Sprintf("iptables -X %s", iptablesChain),
-		fmt.Sprintf("ip6tables -D OUTPUT -j %s", iptablesChain),
-		fmt.Sprintf("ip6tables -F %s", iptablesChain),
-		fmt.Sprintf("ip6tables -X %s", iptablesChain),
+	cleanupCommands := []iptablesRule{
+		{"iptables", []string{"-D", "OUTPUT", "-j", iptablesChain}},
+		{"iptables", []string{"-F", iptablesChain}},
+		{"iptables", []string{"-X", iptablesChain}},
+		{"ip6tables", []string{"-D", "OUTPUT", "-j", iptablesChain}},
+		{"ip6tables", []string{"-F", iptablesChain}},
+		{"ip6tables", []string{"-X", iptablesChain}},
 	}
 
-	for _, cmd := range cleanupCommands {
-		runIPTables(cmd)
+	for _, rule := range cleanupCommands {
+		runIPTables(rule)
 	}
 
 	k.enabled = false
@@ -86,9 +91,8 @@ func (k *LinuxKillSwitch) IsEnabled() bool {
 	return k.enabled
 }
 
-func runIPTables(command string) error {
-	parts := strings.Fields(command)
-	cmd := exec.Command(parts[0], parts[1:]...)
+func runIPTables(rule iptablesRule) error {
+	cmd := exec.Command(rule.binary, rule.args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s: %s", err, strings.TrimSpace(string(output)))

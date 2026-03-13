@@ -19,46 +19,62 @@ func New() KillSwitch {
 	return &WindowsKillSwitch{}
 }
 
+type netshRule struct {
+	name string
+	args []string
+}
+
 func (k *WindowsKillSwitch) Enable(tunnelInterface, serverIP, dnsIP string) error {
 	k.Disable()
 
-	rules := []struct {
-		name string
-		args string
-	}{
+	rules := []netshRule{
 		{
 			name: firewallRulePrefix + "_BlockAll",
-			args: fmt.Sprintf(`netsh advfirewall firewall add rule name="%s_BlockAll" dir=out action=block enable=yes`, firewallRulePrefix),
+			args: []string{"advfirewall", "firewall", "add", "rule",
+				fmt.Sprintf("name=%s_BlockAll", firewallRulePrefix),
+				"dir=out", "action=block", "enable=yes"},
 		},
 		{
 			name: firewallRulePrefix + "_AllowServer",
-			args: fmt.Sprintf(`netsh advfirewall firewall add rule name="%s_AllowServer" dir=out action=allow remoteip=%s enable=yes`, firewallRulePrefix, serverIP),
+			args: []string{"advfirewall", "firewall", "add", "rule",
+				fmt.Sprintf("name=%s_AllowServer", firewallRulePrefix),
+				"dir=out", "action=allow",
+				fmt.Sprintf("remoteip=%s", serverIP), "enable=yes"},
 		},
 		{
 			name: firewallRulePrefix + "_AllowLoopback",
-			args: fmt.Sprintf(`netsh advfirewall firewall add rule name="%s_AllowLoopback" dir=out action=allow remoteip=127.0.0.0/8 enable=yes`, firewallRulePrefix),
+			args: []string{"advfirewall", "firewall", "add", "rule",
+				fmt.Sprintf("name=%s_AllowLoopback", firewallRulePrefix),
+				"dir=out", "action=allow", "remoteip=127.0.0.0/8", "enable=yes"},
 		},
 		{
 			name: firewallRulePrefix + "_AllowLAN1",
-			args: fmt.Sprintf(`netsh advfirewall firewall add rule name="%s_AllowLAN1" dir=out action=allow remoteip=10.0.0.0/8 enable=yes`, firewallRulePrefix),
+			args: []string{"advfirewall", "firewall", "add", "rule",
+				fmt.Sprintf("name=%s_AllowLAN1", firewallRulePrefix),
+				"dir=out", "action=allow", "remoteip=10.0.0.0/8", "enable=yes"},
 		},
 		{
 			name: firewallRulePrefix + "_AllowLAN2",
-			args: fmt.Sprintf(`netsh advfirewall firewall add rule name="%s_AllowLAN2" dir=out action=allow remoteip=172.16.0.0/12 enable=yes`, firewallRulePrefix),
+			args: []string{"advfirewall", "firewall", "add", "rule",
+				fmt.Sprintf("name=%s_AllowLAN2", firewallRulePrefix),
+				"dir=out", "action=allow", "remoteip=172.16.0.0/12", "enable=yes"},
 		},
 		{
 			name: firewallRulePrefix + "_AllowLAN3",
-			args: fmt.Sprintf(`netsh advfirewall firewall add rule name="%s_AllowLAN3" dir=out action=allow remoteip=192.168.0.0/16 enable=yes`, firewallRulePrefix),
+			args: []string{"advfirewall", "firewall", "add", "rule",
+				fmt.Sprintf("name=%s_AllowLAN3", firewallRulePrefix),
+				"dir=out", "action=allow", "remoteip=192.168.0.0/16", "enable=yes"},
 		},
 		{
 			name: firewallRulePrefix + "_AllowDHCP",
-			args: fmt.Sprintf(`netsh advfirewall firewall add rule name="%s_AllowDHCP" dir=out action=allow protocol=udp remoteport=67-68 enable=yes`, firewallRulePrefix),
+			args: []string{"advfirewall", "firewall", "add", "rule",
+				fmt.Sprintf("name=%s_AllowDHCP", firewallRulePrefix),
+				"dir=out", "action=allow", "protocol=udp", "remoteport=67-68", "enable=yes"},
 		},
 	}
 
 	for _, rule := range rules {
-		parts := strings.Fields(rule.args)
-		cmd := exec.Command(parts[0], parts[1:]...)
+		cmd := exec.Command("netsh", rule.args...)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			k.Disable()
 			return fmt.Errorf("enable kill switch rule %s: %w (%s)", rule.name, err, strings.TrimSpace(string(output)))
