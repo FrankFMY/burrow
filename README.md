@@ -263,7 +263,9 @@ Use your actual public server address and a unique admin password. Protect shell
 
 ### CI/CD
 
-Push to `main` triggers automatic deployment via GitHub Actions. Configure these secrets:
+A push to `main` triggers automatic deployment unless every changed path is one of `README.md`, `.github/workflows/ci.yml` or `.github/workflows/deploy.yml`. These three documentation/automation files are not application build inputs. Any other changed path, including runtime configuration or another workflow, retains automatic deployment; mixed changes do too. Normal verification CI still runs on pushes and pull requests. Manual deployment remains available through `workflow_dispatch` on `main`.
+
+Configure these secrets:
 - `DEPLOY_HOST` — server hostname/IP
 - `DEPLOY_USER` — SSH username
 - `DEPLOY_KEY` — SSH private key

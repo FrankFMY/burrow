@@ -3,6 +3,10 @@ name: Deploy
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'README.md'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
 jobs:

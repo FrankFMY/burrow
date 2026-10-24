@@ -12,6 +12,92 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Test deployment path policy
+        run: |
+          python3 - <<'PY'
+          from itertools import combinations
+          from pathlib import Path
+          import re
+          import unittest
+
+          # Contract examples for GitHub's native push path filter, not a deployment runner.
+          # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#git-diff-comparisons
+          EXPECTED = ('README.md', '.github/workflows/ci.yml', '.github/workflows/deploy.yml')
+          workflow = Path('.github/workflows/deploy.yml').read_text()
+          header = workflow.split('\njobs:\n', 1)[0]
+          ignored = tuple(re.findall(r"^      - '([^']+)'$", header, re.M))
+
+          def deploy_event(paths=(), event='push', ref='refs/heads/main', commits=1, timeout=False):
+              if ref != 'refs/heads/main':
+                  return False
+              if event == 'workflow_dispatch':
+                  return True
+              if event != 'push':
+                  return False
+              # Documented provider fallbacks run rather than treating an unknown diff as docs.
+              if commits > 1000 or timeout:
+                  return True
+              return any(path not in ignored for path in paths[:3000])
+
+          class DeploymentPolicy(unittest.TestCase):
+              def test_exact_native_filter_and_manual_trigger(self):
+                  expected = ('name: Deploy\n\non:\n  push:\n    branches: [main]\n'
+                              '    paths-ignore:\n' + ''.join("      - '" + p + "'\n" for p in EXPECTED)
+                              + '  workflow_dispatch:\n')
+                  self.assertEqual(header, expected)
+                  self.assertEqual(ignored, EXPECTED)
+                  self.assertIn("    if: github.ref == 'refs/heads/main'\n", workflow)
+
+              def test_each_nonruntime_path_and_bootstrap_combinations(self):
+                  for count in range(1, len(EXPECTED) + 1):
+                      for paths in combinations(EXPECTED, count):
+                          with self.subTest(paths=paths):
+                              self.assertFalse(deploy_event(paths))
+
+              def test_runtime_build_config_unknown_and_mixed_paths(self):
+                  paths = ('cmd/burrow-server/main.go', 'internal/server/server.go', 'go.mod', 'go.sum',
+                           'web/admin/src/App.svelte', 'web/client/src/main.ts', 'web/admin/package.json',
+                           'web/admin/package-lock.json', 'web/client/package-lock.json', 'web/admin/vite.config.ts',
+                           'embed/admin/index.html', 'Makefile', 'Dockerfile', 'docker-compose.yml',
+                           'config/burrow-server.json', '.env', '.env.production', 'vercel.json',
+                           '.github/workflows/release.yml', '.github/workflows/other.yml', '.github/actions/action.yml',
+                           'scripts/build.sh', 'LICENSE', 'docs/README.md', 'readme.md', 'README.md.bak',
+                           'unknown', 'unknown/file', 'file with spaces', 'file\nwith-newline', '未知配置')
+                  for path in paths:
+                      for changed in ((path,), EXPECTED + (path,), (path,) + EXPECTED):
+                          with self.subTest(paths=changed):
+                              self.assertTrue(deploy_event(changed))
+
+              def test_multicommit_runtime_then_readme_retains_deploy(self):
+                  self.assertTrue(deploy_event(('internal/server/server.go', 'README.md'), commits=3))
+
+              def test_renamed_runtime_to_readme_is_not_docs_only(self):
+                  self.assertTrue(deploy_event(('internal/server/server.go', 'README.md')))
+                  self.assertTrue(deploy_event(('README.md', 'docs/README.md')))
+
+              def test_empty_diff(self):
+                  self.assertFalse(deploy_event(()))
+
+              def test_main_only_and_no_tag_or_other_event_deployment(self):
+                  for ref in ('refs/heads/docs/change', 'refs/heads/master', 'refs/tags/v1.0.0'):
+                      self.assertFalse(deploy_event(('go.mod',), ref=ref))
+                      self.assertFalse(deploy_event(event='workflow_dispatch', ref=ref))
+                  self.assertFalse(deploy_event(('go.mod',), event='pull_request'))
+
+              def test_manual_main_ignores_path_filter(self):
+                  self.assertTrue(deploy_event(EXPECTED, event='workflow_dispatch'))
+                  self.assertTrue(deploy_event(event='workflow_dispatch'))
+
+              def test_unknown_diff_and_large_push_retain_deploy(self):
+                  self.assertTrue(deploy_event(EXPECTED, timeout=True))
+                  self.assertTrue(deploy_event(EXPECTED, commits=1001))
+
+              def test_large_file_diff_cannot_hide_behind_only_three_ignored_names(self):
+                  self.assertTrue(deploy_event(EXPECTED + tuple('runtime/file-' + str(n) for n in range(3100))))
+
+          unittest.main()
+          PY
+
       - uses: actions/setup-go@v6
         with:
           go-version: '1.26'
