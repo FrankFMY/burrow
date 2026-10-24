@@ -1,17 +1,17 @@
 # Burrow
 
-The fastest, most private, and easiest to use VPN & proxy for censorship circumvention.
+A self-hosted VPN and proxy with invite-based access, desktop clients and multiple transports for restrictive networks.
 
-**Deploy a server in one command. Share access with a link. Connect in one click.**
+**Run your own server. Share an invite. Connect from a desktop app or CLI.**
 
 ## What is Burrow?
 
-Burrow is a self-hosted VPN/proxy system designed for people living under internet censorship. It combines military-grade traffic camouflage with dead-simple UX.
+Burrow is a self-hosted VPN/proxy system designed for people living under internet censorship. It combines VLESS+Reality and alternative transports with a straightforward admin dashboard and invite-based onboarding.
 
-- **Undetectable** — VLESS+Reality makes your traffic look like normal HTTPS to any website. DPI cannot distinguish it from legitimate traffic.
-- **Fast** — Direct VLESS+Reality tunnel with zero overhead.
-- **Simple** — Server deploys with Docker. Users connect by pasting an invite link. Zero configuration.
-- **Private** — Self-hosted. You control the server. No logs by default. No telemetry. No third parties.
+- **Transport options** — VLESS+Reality with uTLS Chrome fingerprinting, plus CDN WebSocket, Hysteria2 and Shadowsocks 2022 paths.
+- **Direct when possible** — the client probes the direct path and can fall back to a configured CDN WebSocket route.
+- **Invite-based setup** — administrators configure the server; users add an invite link instead of entering transport settings by hand.
+- **Self-hosted control** — you choose the server, issue and revoke access, and inspect operational logs and traffic counters in the dashboard.
 
 ## Quick Start
 
@@ -20,35 +20,42 @@ Burrow is a self-hosted VPN/proxy system designed for people living under intern
 ```bash
 git clone https://github.com/FrankFMY/burrow.git
 cd burrow
-# Edit docker-compose.yml with your settings
-docker compose up -d
+# Review the initialization and port notes below before starting the service.
+docker compose build
 ```
 
 ### Manual
 
 ```bash
-# Prerequisites: Go 1.26+, Node.js 22+
+# Prerequisites: Go 1.26.1+, Node.js 22+
 git clone https://github.com/FrankFMY/burrow.git
 cd burrow
+npm --prefix web/admin ci
+npm --prefix web/admin run build
 make all
 
-# Initialize server
-burrow-server init --password <your-password> --server <your-ip>
-burrow-server run
+# Initialize a user-owned configuration on unprivileged ports.
+CONFIG="$HOME/.config/burrow/burrow-server.json"
+./bin/burrow-server init \
+  --config "$CONFIG" --data-dir "$HOME/.local/share/burrow" \
+  --port 8443 --api-port 9080 \
+  --password '<your-admin-password>' --server vpn.example.com
+./bin/burrow-server run --config "$CONFIG"
 ```
 
 ### Create an invite
 
-Open the admin dashboard at `https://your-server/admin`, log in, and create an invite from the Invites page. Or via CLI:
+After configuring HTTPS for the admin API, open `https://your-server/admin`, log in, and create an invite from the Invites page. The raw API listener defaults to port `8080` (`9080` in the manual example); the application does not provision that HTTPS endpoint for you. Or use the server CLI:
 
 ```bash
-burrow-server invite create --name "My phone"
+./bin/burrow-server invite create \
+  --config "$HOME/.config/burrow/burrow-server.json" --name "My desktop"
 ```
 
 ### Client
 
 ```bash
-burrow connect "burrow://connect/..."
+./bin/burrow connect "burrow://connect/..."
 ```
 
 Or use the desktop client app — it guides you through setup with a built-in onboarding flow.
@@ -57,22 +64,30 @@ Or use the desktop client app — it guides you through setup with a built-in on
 
 | Protocol | Port | Description |
 |----------|------|-------------|
-| VLESS+Reality | 443/TCP | Camouflaged as real HTTPS traffic, undetectable by DPI |
-| VLESS+WebSocket (CDN) | 8080/TCP | Cloudflare-fronted, bypasses IP-based blocking |
+| VLESS+Reality | 443/TCP | TLS camouflage using a configured target and uTLS fingerprinting |
+| VLESS+WebSocket (CDN) | 8080/TCP | CDN-routed WebSocket transport when configured |
 | Hysteria2 | 8443/UDP | QUIC-based, optimized for lossy networks |
 | Shadowsocks 2022 | 8388/TCP | Modern encryption (2022-blake3-aes-256-gcm) |
 | WireGuard | 51820/UDP | Standard VPN protocol (disabled by default) |
-| TCP Relay/Bridge | any/TCP | Forwards traffic to upstream server, hides real server IP |
+| TCP Relay/Bridge | any/TCP | A separate TCP entry point forwarding to an upstream server |
 
 VLESS+Reality is the primary protocol. If the direct connection is blocked, the client automatically falls back to CDN WebSocket transport. Hysteria2 and Shadowsocks 2022 are enabled by default as additional fallbacks. The client uses [sing-box](https://sing-box.sagernet.org/) as the tunnel engine with uTLS Chrome fingerprinting and Reality protocol for TLS camouflage.
+
+## Transport and trust model
+
+Reality and uTLS are tools for reducing recognizable transport signatures, not a promise of invisibility. A network operator can still block an endpoint, restrict UDP or interfere with a camouflage target. Available transports and performance depend on the network and server configuration.
+
+The server operator is part of the trust boundary. The server and any configured CDN can observe connection metadata; HTTPS and other application-level encryption still protect their own payloads. Burrow is a connectivity tool, not an anonymity network. Operational logs and traffic counters are features, not a zero-logging guarantee.
+
+Keep the admin API behind HTTPS and appropriate access controls. Treat invite links and server configuration as credentials. Test TUN, DNS, split-tunnel and kill-switch behavior on each target OS before relying on a deployment.
 
 ## Features
 
 ### Server
-- **One-command deploy** with Docker or manual setup
+- **Docker or manual deployment** with explicit server initialization
 - **Admin dashboard** — manage clients, create invites, monitor traffic in real-time (auto-refresh)
 - **Landing page** — public landing page at your server root
-- **Invite-only access** — HMAC-signed invite links, revoke access instantly
+- **Invite-based access** — HMAC-signed invite links and administrative revocation
 - **CDN/Cloudflare fronting** — VLESS over WebSocket, Cloudflare terminates TLS
 - **Relay/bridge mode** — `burrow-server relay` masks real server IP behind entry node
 - **Secret rotation** — rotate Reality keys, ShortID, and JWT secret via API with legacy key tracking
@@ -80,16 +95,16 @@ VLESS+Reality is the primary protocol. If the direct connection is blocked, the 
 - **Per-user bandwidth limits** — set quota per client, enforced at connect time
 - **Health metrics** — detailed server health with uptime, memory, goroutines, DB size
 - **In-app log viewer** — ring-buffer log collector exposed via API
-- **Security hardened** — request size limits, input validation, IP spoofing prevention, connection limits
+- **API controls** — request-size limits, input validation, forwarded-IP handling and connection limits
 - **Docker hardened** — non-root user, healthcheck, resource limits
-- **DNS leak prevention** — all DNS through encrypted tunnel
+- **Tunnel DNS routing** — DNS uses the tunnel configuration; verify resolver behavior for your chosen mode and split-tunnel rules
 - **CI/CD** — automated builds, tests, and deployment via GitHub Actions
 
 ### Desktop Client
 - **One-click connect** — big connect button, no configuration needed
 - **VPN mode (TUN)** — routes all system traffic through VPN, no proxy setup required
 - **Proxy mode** — SOCKS5/HTTP on `127.0.0.1:1080` for manual configuration
-- **Kill switch** — blocks ALL internet if VPN drops, prevents unprotected browsing
+- **Kill switch** — optional platform firewall rules to restrict traffic outside the tunnel; requires the appropriate OS privileges
 - **Auto-reconnect** — detects dead tunnel and reconnects with exponential backoff (up to 10 attempts), cancel anytime
 - **Live speed stats** — real-time upload/download speed (KB/s, MB/s) with total traffic counters
 - **Server ping** — latency measurement for each server, color-coded badges
@@ -202,7 +217,7 @@ The app minimizes to system tray on close. Right-click the tray icon for quick c
 ## Building from Source
 
 ```bash
-# Prerequisites: Go 1.26+, Node.js 22+
+# Prerequisites: Go 1.26.1+, Node.js 22+
 git clone https://github.com/FrankFMY/burrow.git
 cd burrow
 
@@ -232,14 +247,25 @@ npx tauri build
 
 ### Docker Compose
 
+The Compose service expects a configuration file at `config/burrow-server.json` and runs as UID/GID `1000`. Create a private `config/` directory writable by that container user, then initialize it before the first start:
+
 ```bash
 docker compose build
+docker compose run --rm burrow init \
+  --config /etc/burrow/burrow-server.json \
+  --data-dir /var/lib/burrow \
+  --password '<your-admin-password>' \
+  --server vpn.example.com
 docker compose up -d
 ```
 
+Use your actual public server address and a unique admin password. Protect shell history and configuration files. The provided Compose mapping exposes TCP ports; publish `8443/udp` explicitly if using Hysteria2, and configure CDN listeners on a port distinct from the admin API. Server initialization configures transports; it does not configure your firewall, DNS, CDN or reverse proxy.
+
 ### CI/CD
 
-Push to `main` triggers automatic deployment via GitHub Actions. Configure these secrets:
+A push to `main` triggers automatic deployment unless every changed path is one of `README.md`, `.github/workflows/ci.yml` or `.github/workflows/deploy.yml`. These three documentation/automation files are not application build inputs. Any other changed path, including runtime configuration or another workflow, retains automatic deployment; mixed changes do too. Normal verification CI still runs on pushes and pull requests. Manual deployment remains available through `workflow_dispatch` on `main`.
+
+Configure these secrets:
 - `DEPLOY_HOST` — server hostname/IP
 - `DEPLOY_USER` — SSH username
 - `DEPLOY_KEY` — SSH private key
@@ -248,9 +274,10 @@ Push to `main` triggers automatic deployment via GitHub Actions. Configure these
 
 Apache License 2.0 — see [LICENSE](LICENSE).
 
-## Author
+## Author and contact
 
-**Pryanishnikov Artem**
-- Email: Pryanishnikovartem@gmail.com
-- Telegram: [@FrankFMY](https://t.me/FrankFMY)
-- GitHub: [@FrankFMY](https://github.com/FrankFMY)
+**Artem Prianishnikov** · [FrankFMY](https://github.com/FrankFMY)
+
+[Website](https://frankfmy.com) · [Telegram](https://t.me/FrankFMY) · [LinkedIn](https://www.linkedin.com/in/frankfmy/) · [X](https://x.com/FrankFMY) · [npm profile](https://www.npmjs.com/~frankfmy)
+
+Email: [frankfmy@proton.me](mailto:frankfmy@proton.me) · [Pryanishnikovartem@gmail.com](mailto:Pryanishnikovartem@gmail.com)
